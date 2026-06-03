@@ -2273,6 +2273,27 @@ function PinGate({mode,onSubmit}){
   );
 }
 
+class ErrorBoundary extends React.Component{
+  constructor(p){ super(p); this.state={err:null}; }
+  static getDerivedStateFromError(err){ return {err}; }
+  componentDidCatch(err,info){ this.setState({err,info}); }
+  render(){
+    if(this.state.err){
+      return React.createElement("div",{style:{padding:"60px 24px",maxWidth:430,margin:"0 auto",color:"#fff",fontFamily:"Outfit",background:"#080b12",minHeight:"100vh"}},
+        React.createElement("div",{style:{fontSize:20,fontWeight:800,color:"#ff5370",marginBottom:12}},"⚠ App error"),
+        React.createElement("div",{style:{fontSize:13,color:"rgba(255,255,255,.6)",marginBottom:16}},"Please screenshot this and send it:"),
+        React.createElement("div",{style:{fontSize:13,fontFamily:"monospace",background:"rgba(255,83,112,.1)",border:"1px solid rgba(255,83,112,.3)",borderRadius:10,padding:"12px",color:"#ff9eb0",whiteSpace:"pre-wrap",wordBreak:"break-word"}},
+          String(this.state.err&&this.state.err.message||this.state.err)
+        ),
+        this.state.err&&this.state.err.stack&&React.createElement("div",{style:{fontSize:10,fontFamily:"monospace",color:"rgba(255,255,255,.4)",marginTop:12,whiteSpace:"pre-wrap",wordBreak:"break-word",maxHeight:240,overflow:"auto"}},
+          String(this.state.err.stack).split("\n").slice(0,8).join("\n")
+        )
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function App(){
   const [data,setDataRaw]=useState(null); // null = loading
   const [screen,setScreen]=useState("dash");
@@ -2280,6 +2301,7 @@ function App(){
   const [unlocked,setUnlocked]=useState(false);
   const saveTimer=useRef(null);
   const isFirstLoad=useRef(true);
+  const swipe=useRef({x:0,y:0}); // must sit with other hooks, before any early return
 
   // ── Load from Firestore on mount ──────────────────────────────────────────
   useEffect(()=>{
@@ -2364,7 +2386,6 @@ function App(){
   const NAV=[{id:"dash",icon:"⊞",label:"Home"},{id:"cashflow",icon:"⇅",label:"Cash"},{id:"invest",icon:"◈",label:"Invest"},{id:"emi",icon:"◷",label:"EMI"},{id:"reports",icon:"⬡",label:"Reports"}];
 
   // ── Swipe navigation between the 5 main screens ───────────────────────────
-  const swipe=useRef({x:0,y:0});
   const mainOrder=["dash","cashflow","invest","emi","reports"];
   function onTouchStart(e){ const t=e.changedTouches[0]; swipe.current={x:t.clientX,y:t.clientY}; }
   function onTouchEnd(e){
@@ -2383,7 +2404,7 @@ function App(){
     <>
       <style>{G}</style>
       <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{maxWidth:430,margin:"0 auto",minHeight:"100vh",background:"#080b12"}}>
-        {SCREENS[screen]||SCREENS.dash}
+        <ErrorBoundary>{SCREENS[screen]||SCREENS.dash}</ErrorBoundary>
 
         {/* Save status indicator */}
         {saveStatus!=="idle"&&(
