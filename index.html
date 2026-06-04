@@ -247,8 +247,8 @@ function Modal({title,onClose,children}){
     return()=>{ document.body.style.overflow=prev; };
   },[]);
   return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.82)",backdropFilter:"blur(2px)",zIndex:300,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"20px 0 40px"}} onClick={onClose}>
-      <div style={{width:"100%",maxWidth:430,margin:"0 12px",background:"#0e1525",borderRadius:20,padding:"22px 20px 26px",border:"1px solid rgba(255,255,255,.08)",boxShadow:"0 16px 50px rgba(0,0,0,.6)"}} onClick={e=>e.stopPropagation()}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.82)",backdropFilter:"blur(2px)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",overflowY:"auto",padding:"20px 12px"}} onClick={onClose}>
+      <div style={{width:"100%",maxWidth:430,background:"#0e1525",borderRadius:20,padding:"22px 20px 26px",border:"1px solid rgba(255,255,255,.08)",boxShadow:"0 16px 50px rgba(0,0,0,.6)",maxHeight:"calc(100vh - 40px)",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
           <span style={{fontSize:17,fontWeight:700}}>{title}</span>
           <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"#fff",width:30,height:30,borderRadius:8,fontSize:15}}>✕</button>
@@ -762,9 +762,11 @@ function Investments({data,setData}){
   const [importRows,setImportRows]=useState([]);
   const [importError,setImportError]=useState("");
   const [manualRows,setManualRows]=useState([{symbol:"",name:"",qty:"",avgPrice:"",sector:"Other"}]);
-  const [aF,setAF]=useState({sub:"stocks",symbol:"",name:"",qty:"",avgPrice:"",currentPrice:"",sector:"Tech",mfName:"",invested:"",nav:"",units:"",mfCat:"Equity",sLabel:"",metal:"gold",purity:"22K",pmMetal:"gold",pmDate:today(),pmItem:"",pmVendor:"",pmPurity:"22K",pmGrams:"",pmValue:""});
+  const [aF,setAF]=useState({sub:"stocks",symbol:"",name:"",qty:"",avgPrice:"",currentPrice:"",sector:"Tech",mfName:"",invested:"",nav:"",units:"",mfCat:"Equity",sLabel:"",metal:"gold",purity:"22K",sMonthly:"",pmMetal:"gold",pmDate:today(),pmItem:"",pmVendor:"",pmPurity:"22K",pmGrams:"",pmValue:""});
   const [instF,setInstF]=useState({month:today().slice(0,7),amountPaid:"",gramsAllotted:""});
   const [navU,setNavU]=useState({});
+  const [sortBy,setSortBy]=useState("value"); // value | name | gain
+  const [query,setQuery]=useState(""); // filter holdings by name/ticker
   // edit/delete state
   const [editStock,setEditStock]=useState(null);
   const [editMF,setEditMF]=useState(null);
@@ -803,7 +805,7 @@ function Investments({data,setData}){
   }
   function addScheme(){
     if(!aF.sLabel) return;
-    setData(d=>({...d,metalSchemes:[...d.metalSchemes,{id:uid(),label:aF.sLabel,metal:aF.metal,purity:aF.purity,installments:[]}]}));
+    setData(d=>({...d,metalSchemes:[...d.metalSchemes,{id:uid(),label:aF.sLabel,metal:aF.metal,purity:aF.purity,monthlyAmount:Number(aF.sMonthly||0),installments:[]}]}));
     setShowAdd(false);
   }
   function addPhysicalGold(){
@@ -817,8 +819,10 @@ function Investments({data,setData}){
     setShowAdd(false);
   }
   function addInstallment(sid){
-    if(!instF.amountPaid||!instF.gramsAllotted) return;
-    setData(d=>({...d,metalSchemes:d.metalSchemes.map(s=>s.id===sid?{...s,installments:[...s.installments,{month:instF.month,amountPaid:Number(instF.amountPaid),gramsAllotted:Number(instF.gramsAllotted)}]}:s)}));
+    const sc=metalSchemes.find(s=>s.id===sid);
+    const amt=sc&&sc.monthlyAmount?sc.monthlyAmount:Number(instF.amountPaid||0);
+    if(!instF.gramsAllotted) return;
+    setData(d=>({...d,metalSchemes:d.metalSchemes.map(s=>s.id===sid?{...s,installments:[...s.installments,{month:instF.month,amountPaid:amt,gramsAllotted:Number(instF.gramsAllotted)}]}:s)}));
     setShowScheme(null);
     setInstF({month:today().slice(0,7),amountPaid:"",gramsAllotted:""});
   }
@@ -924,53 +928,183 @@ function Investments({data,setData}){
     setTab("stocks");
   }
 
+  // Tab-aware summary (hero + two cards reflect the active tab)
+  const heroVal = tab==="stocks"?stockVal : tab==="mf"?mfVal : (goldVal+silverVal);
+  const heroProfit = tab==="stocks"?(stockVal-stockCost) : tab==="mf"?(mfVal-mfCost) : (goldVal+silverVal-metalCost);
+  const card3 = tab==="metals"
+    ? {label:"Gold Holdings", value:(goldG+physGoldG).toFixed(1)+"g", color:"#ffd700"}
+    : {label:"Invested", value:fmtK(tab==="stocks"?stockCost:mfCost), color:"#4fc3f7"};
+
+  // Sort + filter helpers for Stocks & Funds
+  const q=query.trim().toLowerCase();
+  function sortList(arr,valOf,nameOf,gainPctOf){
+    const a=[...arr];
+    if(sortBy==="name") a.sort((x,y)=>nameOf(x).localeCompare(nameOf(y)));
+    else if(sortBy==="gain") a.sort((x,y)=>gainPctOf(y)-gainPctOf(x));
+    else a.sort((x,y)=>valOf(y)-valOf(x));
+    return a;
+  }
+  const stocksView=sortList(
+    stocks.filter(s=>!q||s.symbol.toLowerCase().includes(q)||(s.name||"").toLowerCase().includes(q)),
+    s=>s.qty*s.currentPrice, s=>s.symbol, s=>((s.currentPrice-s.avgPrice)/(s.avgPrice||1))
+  );
+  const mfsView=sortList(
+    mfs.filter(m=>!q||(m.name||"").toLowerCase().includes(q)),
+    m=>m.units*m.currentNAV, m=>m.name, m=>((m.units*m.currentNAV-m.invested)/(m.invested||1))
+  );
+
+  // Metals groups
+  const goldSchemes=metalSchemes.filter(s=>s.metal==="gold");
+  const silverSchemes=metalSchemes.filter(s=>s.metal==="silver");
+  function GroupHead({icon,title,total,color}){
+    return(
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",margin:"16px 0 9px"}}>
+        <div style={{fontSize:12,fontWeight:800,color:color,letterSpacing:".05em",textTransform:"uppercase"}}>{icon} {title}</div>
+        <div className="mono" style={{fontSize:11,color:color,opacity:.85}}>{total}</div>
+      </div>
+    );
+  }
+  function briefLine(parts,accent){
+    return(
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:11,marginTop:5}}>
+        {parts.map(([l,v],i)=>(
+          <span key={i} style={{color:"rgba(255,255,255,.4)"}}>{l} <span className="mono" style={{color:accent,fontWeight:700}}>{v}</span></span>
+        ))}
+      </div>
+    );
+  }
+  function physCard(p,metal){
+    const price=metal==="gold"?prices.gold22k:prices.silver999;
+    const accent=metal==="gold"?"#ffd700":"#c0c0c0";
+    const curVal=p.grams*price, gain=curVal-p.purchaseValue, pos=gain>=0;
+    const key=(metal==="gold"?"pg-":"ps-")+p.id, open=openCard===key;
+    const rgba=metal==="gold"?"255,213,0":"192,192,192";
+    return(
+      <div key={p.id} className="fade-up" onClick={()=>tapToggle(key)} style={{background:`rgba(${rgba},.04)`,border:`1px solid rgba(${rgba},${open?".3":".14"})`,borderRadius:13,padding:"11px 13px",marginBottom:8,cursor:"pointer"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:700,color:accent}}>{p.item}</div>
+            <div style={{fontSize:9,color:"rgba(255,255,255,.32)",marginTop:1}}>{p.vendor||"—"} · {fmtDate(p.date)} · {p.purity}</div>
+          </div>
+          <div style={{textAlign:"right",flexShrink:0,marginLeft:10}}>
+            <div className="mono" style={{fontSize:13,fontWeight:700}}>{fmtK(curVal)}</div>
+            <div style={{fontSize:9,color:pos?"#00f0dc":"#ff5370"}}>{pos?"▲":"▼"} {fmtK(Math.abs(gain))}</div>
+          </div>
+        </div>
+        {briefLine([["Qty",p.grams+"g"],["Cost",fmtK(p.purchaseValue)],["Value",fmtK(curVal)]],accent)}
+        {open&&(
+          <div onClick={e=>e.stopPropagation()}>
+            <ActionBar
+              onEdit={()=> metal==="gold"
+                ? setEditPhysGold({...p,grams:String(p.grams),purchaseValue:String(p.purchaseValue)})
+                : setEditPhysSilver({...p,grams:String(p.grams),purchaseValue:String(p.purchaseValue)})}
+              onDelete={()=>setConfirmDel({type:metal==="gold"?"physGold":"physSilver",id:p.id,label:p.item})}/>
+          </div>
+        )}
+      </div>
+    );
+  }
+  function schemeCard(sc){
+    const accent=sc.metal==="gold"?"#ffd700":"#c0c0c0";
+    const rgba=sc.metal==="gold"?"255,213,0":"192,192,192";
+    const tG=sc.installments.reduce((s,i)=>s+i.gramsAllotted,0);
+    const tP=sc.installments.reduce((s,i)=>s+i.amountPaid,0);
+    const cp=sc.metal==="gold"?prices.gold22k:prices.silver999;
+    const cv=tG*cp, open=openCard===("scheme-"+sc.id);
+    return(
+      <div key={sc.id} onClick={()=>tapToggle("scheme-"+sc.id)} style={{background:`rgba(${rgba},.04)`,border:`1px solid rgba(${rgba},${open?".3":".14"})`,borderRadius:13,padding:"11px 13px",marginBottom:8,cursor:"pointer"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:700,color:accent}}>{sc.label}</div>
+            <div style={{fontSize:9,color:"rgba(255,255,255,.32)",marginTop:1}}>{sc.purity} · {sc.installments.length} payments{sc.monthlyAmount?` · ₹${sc.monthlyAmount}/mo`:""}</div>
+          </div>
+          <div style={{textAlign:"right",flexShrink:0,marginLeft:10}}>
+            <div className="mono" style={{fontSize:13,fontWeight:700,color:"#00f0dc"}}>{fmtK(cv)}</div>
+            <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{open?"▾ tap to close":"▸ tap to open"}</div>
+          </div>
+        </div>
+        {briefLine([["Qty",tG.toFixed(3)+"g"],["Invested",fmtK(tP)],["Value",fmtK(cv)]],accent)}
+        {open&&(
+          <div onClick={e=>e.stopPropagation()} style={{marginTop:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <span style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.4)",textTransform:"uppercase",letterSpacing:".06em"}}>Monthly payments</span>
+              <button onClick={()=>setShowScheme(sc.id)} style={{padding:"5px 10px",borderRadius:8,background:`rgba(${rgba},.12)`,border:`1px solid rgba(${rgba},.25)`,color:accent,fontSize:11,fontWeight:700}}>+ Month</button>
+            </div>
+            {sc.installments.length===0&&<div style={{fontSize:10,color:"rgba(255,255,255,.3)",padding:"4px 0"}}>No payments yet. Tap “+ Month”.</div>}
+            {[...sc.installments].reverse().map((inst,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderTop:"1px solid rgba(255,255,255,.05)"}}>
+                <span style={{fontSize:11,color:"rgba(255,255,255,.5)"}}>{monthLabel(inst.month)}</span>
+                <span style={{fontSize:11,color:"rgba(255,255,255,.45)"}}>{fmtK(inst.amountPaid)}</span>
+                <span className="mono" style={{fontSize:11,color:accent}}>{inst.gramsAllotted}g</span>
+              </div>
+            ))}
+            <ActionBar onEdit={()=>setEditScheme({...sc,installments:sc.installments.map(x=>({...x}))})} onDelete={()=>setConfirmDel({type:"scheme",id:sc.id,label:sc.label})}/>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return(
     <div className="slide-in" style={{paddingBottom:100}}>
-      <div style={{padding:"22px 20px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div style={{fontSize:22,fontWeight:800}}>Portfolio</div>
-        <div style={{display:"flex",gap:8}}>
-          {(()=>{
-            const todayStr=today();
-            const done=stocks.every(s=>s.priceUpdated===todayStr)&&mfs.every(m=>m.navUpdated===todayStr);
-            return(
-              <button onClick={()=>setShowNav(true)} style={{padding:"7px 11px",borderRadius:9,background:done?"rgba(0,200,120,.1)":"rgba(255,213,0,.1)",border:`1px solid ${done?"rgba(0,200,120,.3)":"rgba(255,213,0,.22)"}`,color:done?"#00c878":"#ffd700",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5}}>
-                {done?"✅":"📈"} {done?"Updated":"Update Prices"}
-              </button>
-            );
-          })()}
-          <button onClick={()=>setShowImport(true)} style={{padding:"7px 11px",borderRadius:9,background:"rgba(124,58,237,.15)",border:"1px solid rgba(124,58,237,.35)",color:"#c084fc",fontSize:12,fontWeight:700}}>⬆ Import</button>
-          <button onClick={()=>setShowAdd(true)} style={{width:36,height:36,borderRadius:10,background:"rgba(0,240,220,.1)",border:"1px solid rgba(0,240,220,.22)",color:"#00f0dc",fontSize:20,fontWeight:700}}>+</button>
+      <div style={{position:"sticky",top:0,zIndex:20,background:"#080b12",paddingBottom:8,boxShadow:"0 8px 16px rgba(8,11,18,.55)"}}>
+        <div style={{padding:"18px 20px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:22,fontWeight:800}}>Portfolio</div>
+          <div style={{display:"flex",gap:8}}>
+            {(()=>{
+              const todayStr=today();
+              const done=stocks.every(s=>s.priceUpdated===todayStr)&&mfs.every(m=>m.navUpdated===todayStr);
+              return(
+                <button onClick={()=>setShowNav(true)} style={{padding:"7px 11px",borderRadius:9,background:done?"rgba(0,200,120,.1)":"rgba(255,213,0,.1)",border:`1px solid ${done?"rgba(0,200,120,.3)":"rgba(255,213,0,.22)"}`,color:done?"#00c878":"#ffd700",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5}}>
+                  {done?"✅":"📈"} {done?"Updated":"Update Prices"}
+                </button>
+              );
+            })()}
+            <button onClick={()=>setShowImport(true)} style={{padding:"7px 11px",borderRadius:9,background:"rgba(124,58,237,.15)",border:"1px solid rgba(124,58,237,.35)",color:"#c084fc",fontSize:12,fontWeight:700}}>⬆ Import</button>
+            <button onClick={()=>setShowAdd(true)} style={{width:36,height:36,borderRadius:10,background:"rgba(0,240,220,.1)",border:"1px solid rgba(0,240,220,.22)",color:"#00f0dc",fontSize:20,fontWeight:700}}>+</button>
+          </div>
         </div>
-      </div>
 
-      <div style={{margin:"14px 16px 0",background:"linear-gradient(135deg,#00f0dc,#00b8d9)",borderRadius:20,padding:"18px 22px",position:"relative",overflow:"hidden"}} className="glow-cyan">
-        <div style={{position:"absolute",right:-18,top:-18,width:85,height:85,borderRadius:"50%",background:"rgba(255,255,255,.1)"}}/>
-        <div style={{fontSize:11,color:"rgba(0,0,0,.5)",fontWeight:700,letterSpacing:".1em"}}>CURRENT VALUE</div>
-        <div className="mono" style={{fontSize:28,fontWeight:700,color:"#000d0c",margin:"3px 0"}}>{fmtK(totalVal)}</div>
-        <div style={{display:"inline-flex",background:"rgba(0,0,0,.12)",borderRadius:20,padding:"3px 10px"}}>
-          <span style={{fontSize:12,color:totalProfit>=0?"rgba(0,0,0,.6)":"#5c0000"}}>↗ {totalProfit>=0?"+":""}{fmtK(totalProfit)} All Time</span>
+        <div style={{margin:"12px 16px 0",background:"linear-gradient(135deg,#00f0dc,#00b8d9)",borderRadius:20,padding:"16px 22px",position:"relative",overflow:"hidden"}} className="glow-cyan">
+          <div style={{position:"absolute",right:-18,top:-18,width:85,height:85,borderRadius:"50%",background:"rgba(255,255,255,.1)"}}/>
+          <div style={{fontSize:11,color:"rgba(0,0,0,.5)",fontWeight:700,letterSpacing:".1em"}}>{tab==="stocks"?"STOCKS VALUE":tab==="mf"?"FUNDS VALUE":"METALS VALUE"}</div>
+          <div className="mono" style={{fontSize:26,fontWeight:700,color:"#000d0c",margin:"3px 0"}}>{fmtK(heroVal)}</div>
+          <div style={{display:"inline-flex",background:"rgba(0,0,0,.12)",borderRadius:20,padding:"3px 10px"}}>
+            <span style={{fontSize:12,color:heroProfit>=0?"rgba(0,0,0,.6)":"#5c0000"}}>↗ {heroProfit>=0?"+":""}{fmtK(heroProfit)} All Time</span>
+          </div>
         </div>
-      </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,margin:"10px 16px 0"}}>
-        <Card style={{padding:"12px 14px"}}>
-          <div style={{fontSize:10,color:"rgba(255,255,255,.35)"}}>Total Profit</div>
-          <div className="mono" style={{fontSize:18,fontWeight:700,color:totalProfit>=0?"#00f0dc":"#ff5370"}}>{totalProfit>=0?"+":""}{fmtK(Math.abs(totalProfit))}</div>
-        </Card>
-        <Card style={{padding:"12px 14px",background:"rgba(255,213,0,.04)",border:"1px solid rgba(255,213,0,.12)"}}>
-          <div style={{fontSize:10,color:"rgba(255,213,0,.5)"}}>Gold Holdings</div>
-          <div className="mono" style={{fontSize:18,fontWeight:700,color:"#ffd700"}}>{(goldG+physGoldG).toFixed(1)}g</div>
-        </Card>
-      </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,margin:"10px 16px 0"}}>
+          <Card style={{padding:"12px 14px"}}>
+            <div style={{fontSize:10,color:"rgba(255,255,255,.35)"}}>Total Profit</div>
+            <div className="mono" style={{fontSize:18,fontWeight:700,color:heroProfit>=0?"#00f0dc":"#ff5370"}}>{heroProfit>=0?"+":""}{fmtK(Math.abs(heroProfit))}</div>
+          </Card>
+          <Card style={{padding:"12px 14px",background:tab==="metals"?"rgba(255,213,0,.04)":"rgba(79,195,247,.05)",border:tab==="metals"?"1px solid rgba(255,213,0,.12)":"1px solid rgba(79,195,247,.14)"}}>
+            <div style={{fontSize:10,color:card3.color,opacity:.7}}>{card3.label}</div>
+            <div className="mono" style={{fontSize:18,fontWeight:700,color:card3.color}}>{card3.value}</div>
+          </Card>
+        </div>
 
-      <div style={{display:"flex",gap:7,padding:"14px 16px 0"}}>
-        {[["stocks","📈 Stocks"],["mf","🏦 Funds"],["metals","🥇 Metals"]].map(([id,lbl])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"8px 4px",borderRadius:11,border:"none",background:tab===id?"rgba(0,240,220,.12)":"rgba(255,255,255,.05)",color:tab===id?"#00f0dc":"rgba(255,255,255,.38)",fontSize:12,fontWeight:700,borderBottom:tab===id?"2px solid #00f0dc":"2px solid transparent"}}>{lbl}</button>
-        ))}
+        <div style={{display:"flex",gap:7,padding:"12px 16px 0"}}>
+          {[["stocks","📈 Stocks"],["mf","🏦 Funds"],["metals","🥇 Metals"]].map(([id,lbl])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"8px 4px",borderRadius:11,border:"none",background:tab===id?"rgba(0,240,220,.12)":"rgba(255,255,255,.05)",color:tab===id?"#00f0dc":"rgba(255,255,255,.38)",fontSize:12,fontWeight:700,borderBottom:tab===id?"2px solid #00f0dc":"2px solid transparent"}}>{lbl}</button>
+          ))}
+        </div>
       </div>
 
       <div style={{padding:"12px 16px 0"}}>
-        {tab==="stocks"&&stocks.map(s=>{
+        {(tab==="stocks"||tab==="mf")&&(
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <input value={query} onChange={e=>setQuery(e.target.value)} placeholder={tab==="stocks"?"🔍 Search stock…":"🔍 Search fund…"} style={{flex:1,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"9px 12px",color:"#fff",fontSize:13,fontFamily:"Outfit",outline:"none"}}/>
+            <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"9px 8px",color:"#fff",fontSize:12,fontFamily:"Outfit",outline:"none"}}>
+              <option value="value" style={{background:"#0e1525"}}>Value ↓</option>
+              <option value="name" style={{background:"#0e1525"}}>Name A–Z</option>
+              <option value="gain" style={{background:"#0e1525"}}>Gain % ↓</option>
+            </select>
+          </div>
+        )}
+        {tab==="stocks"&&query&&stocksView.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:"8px 4px"}}>No stocks match “{query}”.</div>}
+        {tab==="stocks"&&stocksView.map(s=>{
           const val=s.qty*s.currentPrice, gain=val-s.qty*s.avgPrice, gPct=((s.currentPrice-s.avgPrice)/(s.avgPrice||1)*100).toFixed(1), pos=gain>=0;
           const open=openCard===("stock-"+s.id);
           return(
@@ -998,7 +1132,8 @@ function Investments({data,setData}){
           );
         })}
 
-        {tab==="mf"&&mfs.map(m=>{
+        {tab==="mf"&&query&&mfsView.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:"8px 4px"}}>No funds match “{query}”.</div>}
+        {tab==="mf"&&mfsView.map(m=>{
           const val=m.units*m.currentNAV, gain=val-m.invested;
           const open=openCard===("mf-"+m.id);
           return(
@@ -1028,130 +1163,36 @@ function Investments({data,setData}){
 
         {tab==="metals"&&(
           <>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-              {[["🥇 Gold 22K",`₹${prices.gold22k}/g`,`${goldG.toFixed(2)}g`,fmtK(goldVal),"#ffd700"],
-                ["🥈 Silver 999",`₹${prices.silver999}/g`,`${silverG.toFixed(2)}g`,fmtK(silverVal),"#c0c0c0"]].map(([l,p,g,v,c])=>(
-                <Card key={l} style={{background:`rgba(${c==="#ffd700"?"255,213,0":"192,192,192"},.04)`,border:`1px solid rgba(${c==="#ffd700"?"255,213,0":"192,192,192"},.12)`}}>
-                  <div style={{fontSize:10,color:c,marginBottom:3}}>{l}</div>
-                  <div className="mono" style={{fontSize:12,fontWeight:700,color:c}}>{p}</div>
-                  <div style={{fontSize:9,color:"rgba(255,255,255,.3)",marginTop:4}}>{g} · {v}</div>
+            {/* Live reference prices */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:4}}>
+              {[["🥇 Gold 22K",`₹${prices.gold22k}/g`,"#ffd700","255,213,0"],
+                ["🥈 Silver 999",`₹${prices.silver999}/g`,"#c0c0c0","192,192,192"]].map(([l,p,c,rgba])=>(
+                <Card key={l} style={{padding:"10px 13px",background:`rgba(${rgba},.04)`,border:`1px solid rgba(${rgba},.12)`}}>
+                  <div style={{fontSize:10,color:c,marginBottom:2}}>{l}</div>
+                  <div className="mono" style={{fontSize:13,fontWeight:700,color:c}}>{p}</div>
                 </Card>
               ))}
             </div>
-            {metalSchemes.map(sc=>{
-              const tG=sc.installments.reduce((s,i)=>s+i.gramsAllotted,0);
-              const tP=sc.installments.reduce((s,i)=>s+i.amountPaid,0);
-              const cp=sc.metal==="gold"?prices.gold22k:prices.silver999;
-              const cv=tG*cp;
-              const open=openCard===("scheme-"+sc.id);
-              return(
-                <div key={sc.id} onClick={()=>tapToggle("scheme-"+sc.id)} style={{background:"rgba(255,255,255,.03)",border:"1px solid "+(open?"rgba(255,213,0,.3)":"rgba(255,255,255,.07)"),borderRadius:15,padding:"14px 15px",marginBottom:10,cursor:"pointer"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-                    <div>
-                      <div style={{fontSize:14,fontWeight:700}}>{sc.label}</div>
-                      <div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{sc.metal==="gold"?"🥇 Gold":"🥈 Silver"} · {sc.purity} · {sc.installments.length} payments</div>
-                    </div>
-                    <button onClick={(e)=>{e.stopPropagation();setShowScheme(sc.id);}} style={{padding:"5px 10px",borderRadius:8,background:"rgba(255,213,0,.1)",border:"1px solid rgba(255,213,0,.22)",color:"#ffd700",fontSize:11,fontWeight:700}}>+ Month</button>
-                  </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7,marginBottom:10}}>
-                    {[["Paid",fmtK(tP),"rgba(255,255,255,.5)"],[sc.metal==="gold"?"Gold":"Silver",tG.toFixed(3)+"g",sc.metal==="gold"?"#ffd700":"#c0c0c0"],["Value",fmtK(cv),"#00f0dc"]].map(([l,v,c])=>(
-                      <div key={l} style={{background:"rgba(255,255,255,.04)",borderRadius:8,padding:"7px 8px"}}>
-                        <div style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>{l}</div>
-                        <div className="mono" style={{fontSize:11,fontWeight:700,color:c}}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {sc.installments.slice(-3).reverse().map((inst,i)=>(
-                    <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
-                      <span style={{fontSize:10,color:"rgba(255,255,255,.38)"}}>{monthLabel(inst.month)}</span>
-                      <span style={{fontSize:10,color:"rgba(255,255,255,.45)"}}>{fmtK(inst.amountPaid)}</span>
-                      <span className="mono" style={{fontSize:10,color:sc.metal==="gold"?"#ffd700":"#c0c0c0"}}>{inst.gramsAllotted}g</span>
-                    </div>
-                  ))}
-                  {open&&(
-                    <div onClick={e=>e.stopPropagation()}>
-                      <ActionBar onEdit={()=>setEditScheme({...sc})} onDelete={()=>setConfirmDel({type:"scheme",id:sc.id,label:sc.label})}/>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
 
-            {/* Physical Gold */}
-            {(physicalGold||[]).length>0&&(
-              <>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",margin:"6px 0 10px"}}>
-                  <div style={{fontSize:11,fontWeight:700,color:"rgba(255,213,0,.6)",letterSpacing:".07em",textTransform:"uppercase"}}>🪙 Physical Gold Purchased</div>
-                  <div className="mono" style={{fontSize:11,color:"#ffd700"}}>{physGoldG.toFixed(2)}g total</div>
-                </div>
-                {(physicalGold||[]).map(pg=>{
-                  const curVal=pg.grams*prices.gold22k;
-                  const gain=curVal-pg.purchaseValue;
-                  const pos=gain>=0;
-                  return(
-                    <div key={pg.id} className="fade-up" style={{background:"rgba(255,213,0,.04)",border:"1px solid rgba(255,213,0,.14)",borderRadius:14,padding:"13px 14px",marginBottom:9}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:14,fontWeight:700,color:"#ffd700"}}>{pg.item}</div>
-                          <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginTop:1}}>{pg.vendor} · {fmtDate(pg.date)}</div>
-                        </div>
-                        <div style={{textAlign:"right",flexShrink:0,marginLeft:10}}>
-                          <div className="mono" style={{fontSize:14,fontWeight:700}}>{fmtK(curVal)}</div>
-                          <div style={{fontSize:10,color:pos?"#00f0dc":"#ff5370"}}>{pos?"▲":"▼"} {fmtK(Math.abs(gain))}</div>
-                        </div>
-                      </div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7}}>
-                        {[["Purity",pg.purity,"rgba(255,213,0,.7)"],["Weight",pg.grams+"g","#ffd700"],["Bought",fmtK(pg.purchaseValue),"rgba(255,255,255,.5)"]].map(([l,v,c])=>(
-                          <div key={l} style={{background:"rgba(255,255,255,.04)",borderRadius:8,padding:"6px 8px"}}>
-                            <div style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>{l}</div>
-                            <div className="mono" style={{fontSize:11,fontWeight:700,color:c}}>{v}</div>
-                          </div>
-                        ))}
-                      </div>
-                      <ActionBar onEdit={()=>setEditPhysGold({...pg,grams:String(pg.grams),purchaseValue:String(pg.purchaseValue)})} onDelete={()=>setConfirmDel({type:"physGold",id:pg.id,label:pg.item})}/>
-                    </div>
-                  );
-                })}
-              </>
-            )}
+            {/* ── Physical Gold ── */}
+            <GroupHead icon="🪙" title="Physical Gold" total={`${physGoldG.toFixed(2)}g · ${fmtK(physGoldG*prices.gold22k)}`} color="#ffd700"/>
+            {(physicalGold||[]).length===0&&<div style={{fontSize:11,color:"rgba(255,255,255,.3)",padding:"2px 2px 4px"}}>No physical gold yet. Add with + above.</div>}
+            {(physicalGold||[]).map(pg=>physCard(pg,"gold"))}
 
-            {/* Physical Silver */}
-            {(physicalSilver||[]).length>0&&(
-              <>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",margin:"6px 0 10px"}}>
-                  <div style={{fontSize:11,fontWeight:700,color:"rgba(192,192,192,.6)",letterSpacing:".07em",textTransform:"uppercase"}}>🥈 Physical Silver Purchased</div>
-                  <div className="mono" style={{fontSize:11,color:"#c0c0c0"}}>{physSilverG.toFixed(2)}g total</div>
-                </div>
-                {(physicalSilver||[]).map(ps=>{
-                  const curVal=ps.grams*prices.silver999;
-                  const gain=curVal-ps.purchaseValue;
-                  const pos=gain>=0;
-                  return(
-                    <div key={ps.id} className="fade-up" style={{background:"rgba(192,192,192,.04)",border:"1px solid rgba(192,192,192,.14)",borderRadius:14,padding:"13px 14px",marginBottom:9}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:14,fontWeight:700,color:"#c0c0c0"}}>{ps.item}</div>
-                          <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginTop:1}}>{ps.vendor} · {fmtDate(ps.date)}</div>
-                        </div>
-                        <div style={{textAlign:"right",flexShrink:0,marginLeft:10}}>
-                          <div className="mono" style={{fontSize:14,fontWeight:700}}>{fmtK(curVal)}</div>
-                          <div style={{fontSize:10,color:pos?"#00f0dc":"#ff5370"}}>{pos?"▲":"▼"} {fmtK(Math.abs(gain))}</div>
-                        </div>
-                      </div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7}}>
-                        {[["Purity",ps.purity,"rgba(192,192,192,.7)"],["Weight",ps.grams+"g","#c0c0c0"],["Bought",fmtK(ps.purchaseValue),"rgba(255,255,255,.5)"]].map(([l,v,c])=>(
-                          <div key={l} style={{background:"rgba(255,255,255,.04)",borderRadius:8,padding:"6px 8px"}}>
-                            <div style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>{l}</div>
-                            <div className="mono" style={{fontSize:11,fontWeight:700,color:c}}>{v}</div>
-                          </div>
-                        ))}
-                      </div>
-                      <ActionBar onEdit={()=>setEditPhysSilver({...ps,grams:String(ps.grams),purchaseValue:String(ps.purchaseValue)})} onDelete={()=>setConfirmDel({type:"physSilver",id:ps.id,label:ps.item})}/>
-                    </div>
-                  );
-                })}
-              </>
-            )}
+            {/* ── Physical Silver ── */}
+            <GroupHead icon="🥈" title="Physical Silver" total={`${physSilverG.toFixed(2)}g · ${fmtK(physSilverG*prices.silver999)}`} color="#c0c0c0"/>
+            {(physicalSilver||[]).length===0&&<div style={{fontSize:11,color:"rgba(255,255,255,.3)",padding:"2px 2px 4px"}}>No physical silver yet. Add with + above.</div>}
+            {(physicalSilver||[]).map(ps=>physCard(ps,"silver"))}
+
+            {/* ── Gold Schemes ── */}
+            <GroupHead icon="🏅" title="Gold Schemes" total={`${goldG.toFixed(2)}g · ${fmtK(goldG*prices.gold22k)}`} color="#ffd700"/>
+            {goldSchemes.length===0&&<div style={{fontSize:11,color:"rgba(255,255,255,.3)",padding:"2px 2px 4px"}}>No gold schemes yet. Add with + above.</div>}
+            {goldSchemes.map(sc=>schemeCard(sc))}
+
+            {/* ── Silver Schemes ── */}
+            <GroupHead icon="🥈" title="Silver Schemes" total={`${silverG.toFixed(2)}g · ${fmtK(silverG*prices.silver999)}`} color="#c0c0c0"/>
+            {silverSchemes.length===0&&<div style={{fontSize:11,color:"rgba(255,255,255,.3)",padding:"2px 2px 4px"}}>No silver schemes yet. Add with + above.</div>}
+            {silverSchemes.map(sc=>schemeCard(sc))}
           </>
         )}
       </div>
@@ -1204,9 +1245,12 @@ function Investments({data,setData}){
             {/* SCHEME FORM */}
             {(aF.metalsType||"scheme")==="scheme"&&(<>
               <FI label="Scheme Name" value={aF.sLabel} onChange={e=>setAF(f=>({...f,sLabel:e.target.value}))} placeholder={aF.pmMetal==="gold"?"Tanishq Gold Scheme":"Silver SIP Plan"}/>
-              <FS label="Purity" value={aF.purity} onChange={e=>setAF(f=>({...f,purity:e.target.value}))} options={aF.pmMetal==="gold"?["24K","22K","18K"]:["999","925","800"]}/>
-              <div style={{background:"rgba(255,213,0,.06)",border:"1px solid rgba(255,213,0,.14)",borderRadius:9,padding:"9px 11px",marginBottom:10,fontSize:11,color:"rgba(255,213,0,.7)"}}>Add monthly payments after creating the scheme.</div>
-              <Btn onClick={()=>{if(!aF.sLabel) return; setData(d=>({...d,metalSchemes:[...d.metalSchemes,{id:uid(),label:aF.sLabel,metal:aF.pmMetal,purity:aF.purity,installments:[]}]})); setShowAdd(false);}} col="#ffd700">Create {aF.pmMetal==="gold"?"Gold":"Silver"} Scheme</Btn>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <FS label="Purity" value={aF.purity} onChange={e=>setAF(f=>({...f,purity:e.target.value}))} options={aF.pmMetal==="gold"?["24K","22K","18K"]:["999","925","800"]}/>
+                <FI label="Monthly Amount (₹)" type="number" value={aF.sMonthly} onChange={e=>setAF(f=>({...f,sMonthly:e.target.value}))} placeholder="15000"/>
+              </div>
+              <div style={{background:"rgba(255,213,0,.06)",border:"1px solid rgba(255,213,0,.14)",borderRadius:9,padding:"9px 11px",marginBottom:10,fontSize:11,color:"rgba(255,213,0,.7)"}}>This fixed monthly amount is reused for every “+ Month” — you’ll only enter the grams each month.</div>
+              <Btn onClick={()=>{if(!aF.sLabel) return; setData(d=>({...d,metalSchemes:[...d.metalSchemes,{id:uid(),label:aF.sLabel,metal:aF.pmMetal,purity:aF.purity,monthlyAmount:Number(aF.sMonthly||0),installments:[]}]})); setShowAdd(false); setAF(f=>({...f,sLabel:"",sMonthly:""}));}} col="#ffd700">Create {aF.pmMetal==="gold"?"Gold":"Silver"} Scheme</Btn>
             </>)}
 
             {/* PHYSICAL PURCHASE FORM */}
@@ -1237,17 +1281,22 @@ function Investments({data,setData}){
         </Modal>
       )}
 
-      {showScheme&&(
+      {showScheme&&(()=>{
+        const sc=metalSchemes.find(s=>s.id===showScheme);
+        const accent=sc&&sc.metal==="silver"?"#c0c0c0":"#ffd700";
+        const rgba=sc&&sc.metal==="silver"?"192,192,192":"255,213,0";
+        return(
         <Modal title="Add Monthly Installment" onClose={()=>setShowScheme(null)}>
-          <div style={{background:"rgba(255,213,0,.06)",border:"1px solid rgba(255,213,0,.14)",borderRadius:9,padding:"9px 11px",marginBottom:12,fontSize:12,color:"rgba(255,213,0,.75)"}}>
-            Scheme: <strong style={{color:"#ffd700"}}>{metalSchemes.find(s=>s.id===showScheme)?.label}</strong>
+          <div style={{background:`rgba(${rgba},.06)`,border:`1px solid rgba(${rgba},.14)`,borderRadius:9,padding:"9px 11px",marginBottom:12,fontSize:12,color:`rgba(${rgba},.85)`}}>
+            Scheme: <strong style={{color:accent}}>{sc?.label}</strong>
+            <div style={{marginTop:3,fontSize:11,color:"rgba(255,255,255,.45)"}}>Monthly amount: <strong className="mono" style={{color:accent}}>₹{sc?.monthlyAmount||0}</strong> (fixed)</div>
           </div>
           <FI label="Month" type="month" value={instF.month} onChange={e=>setInstF(f=>({...f,month:e.target.value}))}/>
-          <FI label="Amount Paid (₹)" type="number" value={instF.amountPaid} onChange={e=>setInstF(f=>({...f,amountPaid:e.target.value}))} placeholder="15000"/>
           <FI label="Grams Allotted" type="number" step="0.001" value={instF.gramsAllotted} onChange={e=>setInstF(f=>({...f,gramsAllotted:e.target.value}))} placeholder="2.05"/>
-          <Btn onClick={()=>addInstallment(showScheme)} col="#ffd700">Save Installment</Btn>
+          <Btn onClick={()=>addInstallment(showScheme)} col={accent}>Save Installment</Btn>
         </Modal>
-      )}
+        );
+      })()}
 
       {showNav&&(()=>{
         const todayStr=today();
@@ -1511,8 +1560,34 @@ function Investments({data,setData}){
             <FS label="Metal" value={editScheme.metal} onChange={e=>setEditScheme(f=>({...f,metal:e.target.value,purity:e.target.value==="gold"?"22K":"999"}))} options={[{v:"gold",l:"🥇 Gold"},{v:"silver",l:"🥈 Silver"}]}/>
             <FS label="Purity" value={editScheme.purity} onChange={e=>setEditScheme(f=>({...f,purity:e.target.value}))} options={editScheme.metal==="gold"?["24K","22K","18K"]:["999","925"]}/>
           </div>
-          <div style={{fontSize:11,color:"rgba(255,255,255,.35)",marginBottom:8}}>Monthly payments are managed with the “+ Month” button on the scheme card.</div>
-          <Btn onClick={()=>{ if(!editScheme.label){return;} setData(d=>({...d,metalSchemes:d.metalSchemes.map(s=>s.id===editScheme.id?{...s,label:editScheme.label,metal:editScheme.metal,purity:editScheme.purity}:s)})); setEditScheme(null); }} col="#ffd700">Save Changes</Btn>
+          <FI label="Monthly Amount (₹)" type="number" value={editScheme.monthlyAmount??""} onChange={e=>setEditScheme(f=>({...f,monthlyAmount:e.target.value}))}/>
+
+          <div style={{fontSize:11,fontWeight:700,color:"rgba(255,255,255,.45)",textTransform:"uppercase",letterSpacing:".06em",margin:"14px 0 8px"}}>Monthly Payments</div>
+          {(editScheme.installments||[]).length===0&&<div style={{fontSize:11,color:"rgba(255,255,255,.3)",marginBottom:8}}>No payments. Add them with “+ Month” on the card.</div>}
+          {(editScheme.installments||[]).map((inst,idx)=>(
+            <div key={idx} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:11,padding:"10px 11px",marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+                <span style={{fontSize:12,fontWeight:700,color:"#fff"}}>{monthLabel(inst.month)}</span>
+                <button onClick={()=>setEditScheme(f=>({...f,installments:f.installments.filter((_,i)=>i!==idx)}))} style={{background:"rgba(255,83,112,.12)",border:"1px solid rgba(255,83,112,.3)",color:"#ff5370",borderRadius:8,padding:"4px 10px",fontSize:11,fontWeight:700}}>🗑 Delete</button>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7}}>
+                <div>
+                  <div style={{fontSize:9,color:"rgba(255,255,255,.3)",marginBottom:2}}>Month</div>
+                  <input type="month" value={inst.month} onChange={e=>setEditScheme(f=>({...f,installments:f.installments.map((x,i)=>i===idx?{...x,month:e.target.value}:x)}))} style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"7px 8px",color:"#fff",fontSize:11,fontFamily:"Outfit",outline:"none"}}/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:"rgba(255,255,255,.3)",marginBottom:2}}>Amount ₹</div>
+                  <input type="number" value={inst.amountPaid} onChange={e=>setEditScheme(f=>({...f,installments:f.installments.map((x,i)=>i===idx?{...x,amountPaid:e.target.value}:x)}))} style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"7px 8px",color:"#fff",fontSize:11,fontFamily:"JetBrains Mono",outline:"none"}}/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:"rgba(255,255,255,.3)",marginBottom:2}}>Grams</div>
+                  <input type="number" step="0.001" value={inst.gramsAllotted} onChange={e=>setEditScheme(f=>({...f,installments:f.installments.map((x,i)=>i===idx?{...x,gramsAllotted:e.target.value}:x)}))} style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"7px 8px",color:"#fff",fontSize:11,fontFamily:"JetBrains Mono",outline:"none"}}/>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          <Btn onClick={()=>{ if(!editScheme.label){return;} setData(d=>({...d,metalSchemes:d.metalSchemes.map(s=>s.id===editScheme.id?{...s,label:editScheme.label,metal:editScheme.metal,purity:editScheme.purity,monthlyAmount:Number(editScheme.monthlyAmount||0),installments:(editScheme.installments||[]).map(x=>({month:x.month,amountPaid:Number(x.amountPaid||0),gramsAllotted:Number(x.gramsAllotted||0)}))}:s)})); setEditScheme(null); }} col="#ffd700">Save Changes</Btn>
         </Modal>
       )}
 
