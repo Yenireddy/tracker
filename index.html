@@ -195,6 +195,9 @@ const fmtK = (n) => n>=10000000?`₹${(n/10000000).toFixed(2)}Cr`:n>=100000?`₹
 const today = () => new Date().toISOString().split("T")[0];
 const fmtDate = (d) => new Date(d).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"2-digit"});
 const monthLabel = (m) => { const [y,mo]=m.split("-"); return `${["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+mo]} '${y.slice(2)}`; };
+// Mutual fund hybrid model: if a fund has monthly SIP entries, sum them; otherwise use flat invested/units.
+const mfInvested = (m) => (m.sips&&m.sips.length)?m.sips.reduce((s,x)=>s+(Number(x.amount)||0),0):(Number(m.invested)||0);
+const mfUnits = (m) => (m.sips&&m.sips.length)?m.sips.reduce((s,x)=>s+(Number(x.units)||0),0):(Number(m.units)||0);
 
 // ── Shared UI ─────────────────────────────────────────────────────────────────
 function Donut({data,size=140,stroke=22}){
@@ -318,7 +321,7 @@ function Dashboard({data,setData,nav}){
   const totalIn=transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
   const totalOut=transactions.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
   const stockVal=stocks.reduce((s,st)=>s+st.qty*st.currentPrice,0);
-  const mfVal=mfs.reduce((s,m)=>s+m.units*m.currentNAV,0);
+  const mfVal=mfs.reduce((s,m)=>s+mfUnits(m)*m.currentNAV,0);
   const goldG=metalSchemes.filter(s=>s.metal==="gold").reduce((s,sc)=>s+sc.installments.reduce((a,i)=>a+i.gramsAllotted,0),0);
   const silverG=metalSchemes.filter(s=>s.metal==="silver").reduce((s,sc)=>s+sc.installments.reduce((a,i)=>a+i.gramsAllotted,0),0);
   const goldVal=goldG*prices.gold22k, silverVal=silverG*prices.silver999;
@@ -764,6 +767,8 @@ function Investments({data,setData}){
   const [manualRows,setManualRows]=useState([{symbol:"",name:"",qty:"",avgPrice:"",sector:"Other"}]);
   const [aF,setAF]=useState({sub:"stocks",symbol:"",name:"",qty:"",avgPrice:"",currentPrice:"",sector:"Tech",mfName:"",invested:"",nav:"",units:"",mfCat:"Equity",sLabel:"",metal:"gold",purity:"22K",sMonthly:"",pmMetal:"gold",pmDate:today(),pmItem:"",pmVendor:"",pmPurity:"22K",pmGrams:"",pmValue:""});
   const [instF,setInstF]=useState({month:today().slice(0,7),amountPaid:"",gramsAllotted:""});
+  const [showSip,setShowSip]=useState(null); // fund id for monthly SIP entry
+  const [sipF,setSipF]=useState({month:today().slice(0,7),amount:"",nav:""});
   const [navU,setNavU]=useState({});
   const [sortBy,setSortBy]=useState("value"); // value | name | gain
   const [query,setQuery]=useState(""); // filter holdings by name/ticker
@@ -779,8 +784,8 @@ function Investments({data,setData}){
 
   const stockVal=stocks.reduce((s,st)=>s+st.qty*st.currentPrice,0);
   const stockCost=stocks.reduce((s,st)=>s+st.qty*st.avgPrice,0);
-  const mfVal=mfs.reduce((s,m)=>s+m.units*m.currentNAV,0);
-  const mfCost=mfs.reduce((s,m)=>s+m.invested,0);
+  const mfVal=mfs.reduce((s,m)=>s+mfUnits(m)*m.currentNAV,0);
+  const mfCost=mfs.reduce((s,m)=>s+mfInvested(m),0);
   const goldG=metalSchemes.filter(s=>s.metal==="gold").reduce((s,sc)=>s+sc.installments.reduce((a,i)=>a+i.gramsAllotted,0),0);
   const silverG=metalSchemes.filter(s=>s.metal==="silver").reduce((s,sc)=>s+sc.installments.reduce((a,i)=>a+i.gramsAllotted,0),0);
   const physGoldG=(physicalGold||[]).reduce((s,p)=>s+p.grams,0);
@@ -799,8 +804,8 @@ function Investments({data,setData}){
     setShowAdd(false);
   }
   function addMF(){
-    if(!aF.mfName||!aF.units) return;
-    setData(d=>({...d,mfs:[...d.mfs,{id:uid(),name:aF.mfName,invested:Number(aF.invested||0),currentNAV:Number(aF.nav||0),units:Number(aF.units),category:aF.mfCat}]}));
+    if(!aF.mfName) return;
+    setData(d=>({...d,mfs:[...d.mfs,{id:uid(),name:aF.mfName,invested:Number(aF.invested||0),currentNAV:Number(aF.nav||0),units:Number(aF.units||0),category:aF.mfCat,sips:[]}]}));
     setShowAdd(false);
   }
   function addScheme(){
@@ -842,8 +847,17 @@ function Investments({data,setData}){
   }
   function saveEditMF(){
     if(!editMF.name) return;
-    setData(d=>({...d,mfs:d.mfs.map(m=>m.id===editMF.id?{...m,...editMF,invested:Number(editMF.invested),currentNAV:Number(editMF.currentNAV),units:Number(editMF.units)}:m)}));
+    const sips=(editMF.sips||[]).map(x=>{ const amount=Number(x.amount||0), nav=Number(x.nav||0); return {month:x.month,amount,nav,units:nav>0?amount/nav:Number(x.units||0)}; });
+    setData(d=>({...d,mfs:d.mfs.map(m=>m.id===editMF.id?{...m,name:editMF.name,category:editMF.category,currentNAV:Number(editMF.currentNAV),invested:Number(editMF.invested||0),units:Number(editMF.units||0),sips}:m)}));
     setEditMF(null);
+  }
+  function addSip(fid){
+    const amount=Number(sipF.amount||0), nav=Number(sipF.nav||0);
+    if(!amount||!nav) return;
+    const units=amount/nav;
+    setData(d=>({...d,mfs:d.mfs.map(m=>m.id===fid?{...m,sips:[...(m.sips||[]),{month:sipF.month,amount,nav,units}]}:m)}));
+    setShowSip(null);
+    setSipF({month:today().slice(0,7),amount:"",nav:""});
   }
   function saveEditPhysGold(){
     if(!editPhysGold.item||!editPhysGold.grams) return;
@@ -950,7 +964,7 @@ function Investments({data,setData}){
   );
   const mfsView=sortList(
     mfs.filter(m=>!q||(m.name||"").toLowerCase().includes(q)),
-    m=>m.units*m.currentNAV, m=>m.name, m=>((m.units*m.currentNAV-m.invested)/(m.invested||1))
+    m=>mfUnits(m)*m.currentNAV, m=>m.name, m=>((mfUnits(m)*m.currentNAV-mfInvested(m))/(mfInvested(m)||1))
   );
 
   // Metals groups
@@ -1134,28 +1148,44 @@ function Investments({data,setData}){
 
         {tab==="mf"&&query&&mfsView.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:"8px 4px"}}>No funds match “{query}”.</div>}
         {tab==="mf"&&mfsView.map(m=>{
-          const val=m.units*m.currentNAV, gain=val-m.invested;
+          const units=mfUnits(m), invested=mfInvested(m);
+          const val=units*m.currentNAV, gain=val-invested, pos=gain>=0;
           const open=openCard===("mf-"+m.id);
+          const sips=m.sips||[];
           return(
             <div key={m.id} className="fade-up" onClick={()=>tapToggle("mf-"+m.id)} style={{background:"rgba(255,255,255,.03)",border:"1px solid "+(open?"rgba(224,64,251,.3)":"rgba(255,255,255,.07)"),borderRadius:15,padding:"13px 15px",marginBottom:9,cursor:"pointer"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-                <div style={{display:"flex",alignItems:"center",gap:9}}>
-                  <div style={{width:36,height:36,borderRadius:10,background:"rgba(224,64,251,.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>🏦</div>
-                  <div><div style={{fontSize:13,fontWeight:700,maxWidth:175}}>{m.name}</div><div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{m.units.toFixed(3)} units · NAV ₹{m.currentNAV}</div></div>
+                <div style={{display:"flex",alignItems:"center",gap:9,flex:1,minWidth:0}}>
+                  <div style={{width:36,height:36,borderRadius:10,background:"rgba(224,64,251,.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>🏦</div>
+                  <div style={{minWidth:0}}><div style={{fontSize:13,fontWeight:700}}>{m.name}</div><div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{units.toFixed(3)} units{sips.length?` · ${sips.length} SIPs`:""}</div></div>
                 </div>
-                <div style={{textAlign:"right"}}><div className="mono" style={{fontSize:14,fontWeight:700}}>{fmtK(val)}</div><div style={{fontSize:11,color:gain>=0?"#00f0dc":"#ff5370"}}>{gain>=0?"+":""}{fmtK(gain)}</div></div>
+                <div style={{textAlign:"right",flexShrink:0,marginLeft:8}}><div className="mono" style={{fontSize:14,fontWeight:700}}>{fmtK(val)}</div><div style={{fontSize:11,color:pos?"#00f0dc":"#ff5370"}}>{pos?"+":""}{fmtK(gain)}</div></div>
+              </div>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:11,marginTop:6}}>
+                <span style={{color:"rgba(255,255,255,.4)"}}>Invested <span className="mono" style={{color:"#fff",fontWeight:700}}>{fmtK(invested)}</span></span>
+                <span style={{color:"rgba(255,255,255,.4)"}}>NAV <span className="mono" style={{color:"#e040fb",fontWeight:700}}>₹{m.currentNAV}</span></span>
+                <span style={{color:"rgba(255,255,255,.4)"}}>Value <span className="mono" style={{color:"#00f0dc",fontWeight:700}}>{fmtK(val)}</span></span>
               </div>
               {open&&(
-                <>
-                  <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid rgba(255,255,255,.05)",paddingTop:7,marginTop:8}}>
-                    <div><div style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>Invested</div><div className="mono" style={{fontSize:11}}>{fmtK(m.invested)}</div></div>
+                <div onClick={e=>e.stopPropagation()} style={{marginTop:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                    <span style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.4)",textTransform:"uppercase",letterSpacing:".06em"}}>Monthly SIPs</span>
+                    <button onClick={()=>setShowSip(m.id)} style={{padding:"5px 10px",borderRadius:8,background:"rgba(224,64,251,.12)",border:"1px solid rgba(224,64,251,.28)",color:"#e040fb",fontSize:11,fontWeight:700}}>+ Month</button>
+                  </div>
+                  {sips.length===0&&<div style={{fontSize:10,color:"rgba(255,255,255,.3)",padding:"4px 0"}}>No SIP entries. These 7 funds use their saved totals — tap “+ Month” to start logging SIPs, or Edit to adjust.</div>}
+                  {[...sips].reverse().map((sp,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderTop:"1px solid rgba(255,255,255,.05)"}}>
+                      <span style={{fontSize:11,color:"rgba(255,255,255,.5)",flex:1}}>{monthLabel(sp.month)}</span>
+                      <span style={{fontSize:11,color:"rgba(255,255,255,.45)",flex:1,textAlign:"center"}}>{fmtK(sp.amount)} @ ₹{sp.nav}</span>
+                      <span className="mono" style={{fontSize:11,color:"#e040fb",flex:1,textAlign:"right"}}>{Number(sp.units).toFixed(3)}u</span>
+                    </div>
+                  ))}
+                  <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid rgba(255,255,255,.05)",paddingTop:7,marginTop:6}}>
                     <div><div style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>Category</div><div style={{fontSize:11}}>{m.category}</div></div>
-                    <div style={{textAlign:"right"}}><div style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>NAV</div><div className="mono" style={{fontSize:11,color:"#e040fb"}}>₹{m.currentNAV}</div></div>
+                    <div style={{textAlign:"right"}}><div style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>Avg cost/unit</div><div className="mono" style={{fontSize:11}}>₹{units>0?(invested/units).toFixed(2):"0"}</div></div>
                   </div>
-                  <div onClick={e=>e.stopPropagation()}>
-                    <ActionBar onEdit={()=>setEditMF({...m,invested:String(m.invested),currentNAV:String(m.currentNAV),units:String(m.units)})} onDelete={()=>setConfirmDel({type:"mf",id:m.id,label:m.name})}/>
-                  </div>
-                </>
+                  <ActionBar onEdit={()=>setEditMF({...m,invested:String(m.invested??0),currentNAV:String(m.currentNAV),units:String(m.units??0),sips:(m.sips||[]).map(x=>({...x,amount:String(x.amount),nav:String(x.nav)}))})} onDelete={()=>setConfirmDel({type:"mf",id:m.id,label:m.name})}/>
+                </div>
               )}
             </div>
           );
@@ -1219,12 +1249,13 @@ function Investments({data,setData}){
           </>)}
           {aF.sub==="mf"&&(<>
             <FI label="Fund Name" value={aF.mfName} onChange={e=>setAF(f=>({...f,mfName:e.target.value}))} placeholder="Axis Bluechip Fund"/>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-              <FI label="Invested (₹)" type="number" value={aF.invested} onChange={e=>setAF(f=>({...f,invested:e.target.value}))} placeholder="5000"/>
-              <FI label="Current NAV (₹)" type="number" value={aF.nav} onChange={e=>setAF(f=>({...f,nav:e.target.value}))} placeholder="44.61"/>
-            </div>
-            <FI label="Total Units" type="number" value={aF.units} onChange={e=>setAF(f=>({...f,units:e.target.value}))} placeholder="112.07"/>
+            <FI label="Current NAV (₹)" type="number" value={aF.nav} onChange={e=>setAF(f=>({...f,nav:e.target.value}))} placeholder="44.61"/>
             <FS label="Category" value={aF.mfCat} onChange={e=>setAF(f=>({...f,mfCat:e.target.value}))} options={["Equity","Debt","Hybrid","Silver","Gold","Sector","ELSS"]}/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <FI label="Invested (₹) — optional" type="number" value={aF.invested} onChange={e=>setAF(f=>({...f,invested:e.target.value}))} placeholder="0"/>
+              <FI label="Total Units — optional" type="number" value={aF.units} onChange={e=>setAF(f=>({...f,units:e.target.value}))} placeholder="0"/>
+            </div>
+            <div style={{background:"rgba(224,64,251,.06)",border:"1px solid rgba(224,64,251,.16)",borderRadius:9,padding:"9px 11px",marginBottom:10,fontSize:11,color:"rgba(224,64,251,.75)"}}>Leave invested/units at 0 and log each month with “+ Month” (Amount + Purchase NAV). Or enter starting totals now.</div>
             <Btn onClick={addMF}>Add Mutual Fund</Btn>
           </>)}
           {aF.sub==="metals"&&(<>
@@ -1294,6 +1325,30 @@ function Investments({data,setData}){
           <FI label="Month" type="month" value={instF.month} onChange={e=>setInstF(f=>({...f,month:e.target.value}))}/>
           <FI label="Grams Allotted" type="number" step="0.001" value={instF.gramsAllotted} onChange={e=>setInstF(f=>({...f,gramsAllotted:e.target.value}))} placeholder="2.05"/>
           <Btn onClick={()=>addInstallment(showScheme)} col={accent}>Save Installment</Btn>
+        </Modal>
+        );
+      })()}
+
+      {showSip&&(()=>{
+        const f=mfs.find(x=>x.id===showSip);
+        const amt=Number(sipF.amount||0), nav=Number(sipF.nav||0);
+        const units=nav>0?amt/nav:0;
+        return(
+        <Modal title="Add Monthly SIP" onClose={()=>setShowSip(null)}>
+          <div style={{background:"rgba(224,64,251,.06)",border:"1px solid rgba(224,64,251,.16)",borderRadius:9,padding:"9px 11px",marginBottom:12,fontSize:12,color:"rgba(224,64,251,.85)"}}>
+            Fund: <strong style={{color:"#e040fb"}}>{f?.name}</strong>
+          </div>
+          <FI label="Month" type="month" value={sipF.month} onChange={e=>setSipF(v=>({...v,month:e.target.value}))}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <FI label="Amount Paid (₹)" type="number" value={sipF.amount} onChange={e=>setSipF(v=>({...v,amount:e.target.value}))} placeholder="5000"/>
+            <FI label="Purchase NAV (₹)" type="number" step="0.0001" value={sipF.nav} onChange={e=>setSipF(v=>({...v,nav:e.target.value}))} placeholder="44.61"/>
+          </div>
+          {amt>0&&nav>0&&(
+            <div style={{background:"rgba(0,240,220,.06)",border:"1px solid rgba(0,240,220,.14)",borderRadius:9,padding:"9px 12px",marginBottom:10,fontSize:12,color:"rgba(0,240,220,.85)"}}>
+              Units this month → <strong className="mono" style={{color:"#00f0dc"}}>{units.toFixed(3)}</strong> <span style={{color:"rgba(255,255,255,.4)"}}>(₹{amt} ÷ ₹{nav})</span>
+            </div>
+          )}
+          <Btn onClick={()=>addSip(showSip)} col="#e040fb" tc="#fff">Save SIP</Btn>
         </Modal>
         );
       })()}
@@ -1543,11 +1598,45 @@ function Investments({data,setData}){
         <Modal title="✏ Edit Mutual Fund" onClose={()=>setEditMF(null)}>
           <FI label="Fund Name" value={editMF.name} onChange={e=>setEditMF(f=>({...f,name:e.target.value}))}/>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            <FI label="Invested (₹)" type="number" value={editMF.invested} onChange={e=>setEditMF(f=>({...f,invested:e.target.value}))}/>
-            <FI label="Current NAV (₹)" type="number" value={editMF.currentNAV} onChange={e=>setEditMF(f=>({...f,currentNAV:e.target.value}))}/>
+            <FI label="Current NAV (₹) — daily" type="number" value={editMF.currentNAV} onChange={e=>setEditMF(f=>({...f,currentNAV:e.target.value}))}/>
+            <FS label="Category" value={editMF.category} onChange={e=>setEditMF(f=>({...f,category:e.target.value}))} options={["Equity","Debt","Hybrid","Silver","Gold","Sector","ELSS"]}/>
           </div>
-          <FI label="Total Units" type="number" value={editMF.units} onChange={e=>setEditMF(f=>({...f,units:e.target.value}))}/>
-          <FS label="Category" value={editMF.category} onChange={e=>setEditMF(f=>({...f,category:e.target.value}))} options={["Equity","Debt","Hybrid","Silver","Gold","Sector","ELSS"]}/>
+
+          {(!editMF.sips||editMF.sips.length===0)&&(
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <FI label="Invested (₹)" type="number" value={editMF.invested} onChange={e=>setEditMF(f=>({...f,invested:e.target.value}))}/>
+              <FI label="Total Units" type="number" value={editMF.units} onChange={e=>setEditMF(f=>({...f,units:e.target.value}))}/>
+            </div>
+          )}
+
+          {editMF.sips&&editMF.sips.length>0&&(<>
+            <div style={{fontSize:11,fontWeight:700,color:"rgba(255,255,255,.45)",textTransform:"uppercase",letterSpacing:".06em",margin:"14px 0 4px"}}>Monthly SIPs</div>
+            <div style={{fontSize:10,color:"rgba(224,64,251,.7)",marginBottom:8}}>Invested &amp; units are calculated from these SIP entries (Amount ÷ Purchase NAV).</div>
+            {editMF.sips.map((sp,idx)=>(
+              <div key={idx} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:11,padding:"10px 11px",marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+                  <span style={{fontSize:12,fontWeight:700}}>{monthLabel(sp.month)}</span>
+                  <button onClick={()=>setEditMF(f=>({...f,sips:f.sips.filter((_,i)=>i!==idx)}))} style={{background:"rgba(255,83,112,.12)",border:"1px solid rgba(255,83,112,.3)",color:"#ff5370",borderRadius:8,padding:"4px 10px",fontSize:11,fontWeight:700}}>🗑 Delete</button>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7}}>
+                  <div>
+                    <div style={{fontSize:9,color:"rgba(255,255,255,.3)",marginBottom:2}}>Month</div>
+                    <input type="month" value={sp.month} onChange={e=>setEditMF(f=>({...f,sips:f.sips.map((x,i)=>i===idx?{...x,month:e.target.value}:x)}))} style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"7px 8px",color:"#fff",fontSize:11,fontFamily:"Outfit",outline:"none"}}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:"rgba(255,255,255,.3)",marginBottom:2}}>Amount ₹</div>
+                    <input type="number" value={sp.amount} onChange={e=>setEditMF(f=>({...f,sips:f.sips.map((x,i)=>i===idx?{...x,amount:e.target.value}:x)}))} style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"7px 8px",color:"#fff",fontSize:11,fontFamily:"JetBrains Mono",outline:"none"}}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:"rgba(255,255,255,.3)",marginBottom:2}}>Purch. NAV</div>
+                    <input type="number" value={sp.nav} onChange={e=>setEditMF(f=>({...f,sips:f.sips.map((x,i)=>i===idx?{...x,nav:e.target.value}:x)}))} style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"7px 8px",color:"#fff",fontSize:11,fontFamily:"JetBrains Mono",outline:"none"}}/>
+                  </div>
+                </div>
+                <div style={{fontSize:9,color:"rgba(255,255,255,.35)",marginTop:5}}>Units this month: <span className="mono" style={{color:"#e040fb"}}>{(Number(sp.nav)>0?Number(sp.amount)/Number(sp.nav):0).toFixed(3)}</span></div>
+              </div>
+            ))}
+          </>)}
+
           <Btn onClick={saveEditMF}>Save Changes</Btn>
         </Modal>
       )}
@@ -1863,7 +1952,7 @@ function Reports({data}){
   const totalIn=filtered.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
   const totalOut=filtered.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
   const stockVal=stocks.reduce((s,st)=>s+st.qty*st.currentPrice,0);
-  const mfVal=mfs.reduce((s,m)=>s+m.units*m.currentNAV,0);
+  const mfVal=mfs.reduce((s,m)=>s+mfUnits(m)*m.currentNAV,0);
   const goldG=metalSchemes.filter(s=>s.metal==="gold").reduce((s,sc)=>s+sc.installments.reduce((a,i)=>a+i.gramsAllotted,0),0);
   const physGoldG=(physicalGold||[]).reduce((s,p)=>s+p.grams,0);
   const silverG=metalSchemes.filter(s=>s.metal==="silver").reduce((s,sc)=>s+sc.installments.reduce((a,i)=>a+i.gramsAllotted,0),0);
