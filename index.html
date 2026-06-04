@@ -1900,7 +1900,9 @@ function EMIDebt({data,setData}){
   const [confirmDel,setConfirmDel]=useState(null); // {type,id,label}
   const [openCard,setOpenCard]=useState(null);
   const tapToggle=(key)=>setOpenCard(c=>c===key?null:key);
-  const [lF,setLF]=useState({type:"loan",label:"",lender:"",total:"",remaining:"",emi:"",dueDay:"",secured:true,color:"#00f0dc",last4:"",outstanding:"",limit:"",dueDate:today(),recLabel:"",recAmount:"",recDueDay:"",recCat:"Rent"});
+  const [lF,setLF]=useState({type:"loan",label:"",lender:"",total:"",remaining:"",emi:"",dueDay:"",secured:true,color:"#00f0dc",last4:"",bank:"",outstanding:"",limit:"",dueDate:today(),recLabel:"",recAmount:"",recDueDay:"",recCat:"Rent"});
+  const [openPaySec,setOpenPaySec]=useState({secured:true,unsecured:true,recurring:true,cards:true});
+  const togSec=(k)=>setOpenPaySec(s=>({...s,[k]:!s[k]}));
   const totalDebt=loans.reduce((s,l)=>s+l.remaining,0)+cards.reduce((s,c)=>s+c.outstanding,0);
   const days=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()+i-1);return d;});
   const pending=pendingPayments(data,5);
@@ -1922,7 +1924,7 @@ function EMIDebt({data,setData}){
       }
     } else if(lF.type==="card") {
       if(!lF.label||!lF.outstanding) return;
-      setData(d=>({...d,cards:[...d.cards,{id:uid(),label:lF.label,last4:lF.last4||"0000",outstanding:Number(lF.outstanding),limit:Number(lF.limit||100000),dueDate:lF.dueDate,color:"linear-gradient(135deg,#00f0dc,#7c3aed)"}]}));
+      setData(d=>({...d,cards:[...d.cards,{id:uid(),label:lF.label,bank:lF.bank||"",last4:lF.last4||"0000",outstanding:Number(lF.outstanding),limit:Number(lF.limit||100000),dueDate:lF.dueDate,color:"linear-gradient(135deg,#00f0dc,#7c3aed)"}]}));
     } else { // recurring
       if(!lF.recLabel||!lF.recAmount) return;
       setData(d=>({...d,recurring:[...(d.recurring||[]),{id:uid(),label:lF.recLabel,amount:Number(lF.recAmount),dueDay:Number(lF.recDueDay||1),category:lF.recCat}]}));
@@ -1941,7 +1943,7 @@ function EMIDebt({data,setData}){
   }
   function saveEditCard(){
     if(!editCard.label) return;
-    setData(d=>({...d,cards:d.cards.map(c=>c.id===editCard.id?{...c,label:editCard.label,last4:editCard.last4||"0000",outstanding:Number(editCard.outstanding),limit:Number(editCard.limit||100000),dueDate:editCard.dueDate}:c)}));
+    setData(d=>({...d,cards:d.cards.map(c=>c.id===editCard.id?{...c,label:editCard.label,bank:editCard.bank||"",last4:editCard.last4||"0000",outstanding:Number(editCard.outstanding),limit:Number(editCard.limit||100000),dueDate:editCard.dueDate}:c)}));
     setEditCard(null);
   }
   function saveEditRec(){
@@ -2006,8 +2008,14 @@ function EMIDebt({data,setData}){
         {/* Secured loans — full EMI cards */}
         {loans.filter(l=>l.secured).length>0&&(
           <div style={{marginBottom:4}}>
-            <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>Secured Loans</div>
-            {loans.filter(l=>l.secured).map(l=>{
+            <div onClick={()=>togSec("secured")} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(0,240,220,.06)",border:"1px solid rgba(0,240,220,.14)",borderRadius:12,padding:"11px 14px",marginBottom:openPaySec.secured?10:0,cursor:"pointer"}}>
+              <div style={{fontSize:12,fontWeight:800,color:"#00f0dc",letterSpacing:".06em",textTransform:"uppercase"}}>🔐 Secured Loans</div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span className="mono" style={{fontSize:12,color:"rgba(0,240,220,.7)"}}>{loans.filter(l=>l.secured).length} loan{loans.filter(l=>l.secured).length!==1?"s":""}</span>
+                <span style={{color:"#00f0dc",fontSize:14}}>{openPaySec.secured?"▾":"▸"}</span>
+              </div>
+            </div>
+            {openPaySec.secured&&loans.filter(l=>l.secured).map(l=>{
               const paid=Math.round((1-l.remaining/l.total)*100);
               const open=openCard===("loan-"+l.id);
               return(
@@ -2044,8 +2052,14 @@ function EMIDebt({data,setData}){
         {/* Unsecured loans — balance only */}
         {loans.filter(l=>!l.secured).length>0&&(
           <div style={{marginBottom:4}}>
-            <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>Unsecured · Balances</div>
-            {loans.filter(l=>!l.secured).map(l=>{
+            <div onClick={()=>togSec("unsecured")} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(255,83,112,.06)",border:"1px solid rgba(255,83,112,.16)",borderRadius:12,padding:"11px 14px",marginBottom:openPaySec.unsecured?10:0,cursor:"pointer"}}>
+              <div style={{fontSize:12,fontWeight:800,color:"#ff5370",letterSpacing:".06em",textTransform:"uppercase"}}>💸 Unsecured · Balances</div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span className="mono" style={{fontSize:12,color:"rgba(255,83,112,.7)"}}>{loans.filter(l=>!l.secured).length} loan{loans.filter(l=>!l.secured).length!==1?"s":""}</span>
+                <span style={{color:"#ff5370",fontSize:14}}>{openPaySec.unsecured?"▾":"▸"}</span>
+              </div>
+            </div>
+            {openPaySec.unsecured&&loans.filter(l=>!l.secured).map(l=>{
               const open=openCard===("loan-"+l.id);
               return(
                 <div key={l.id} className="fade-up" onClick={()=>tapToggle("loan-"+l.id)} style={{background:"rgba(255,83,112,.05)",border:"1px solid "+(open?"rgba(255,83,112,.3)":"rgba(255,83,112,.14)"),borderRadius:15,padding:"13px",marginBottom:10,cursor:"pointer"}}>
@@ -2065,48 +2079,67 @@ function EMIDebt({data,setData}){
         )}
 
         {/* Recurring bills */}
-        <div style={{fontSize:10,fontWeight:700,color:"rgba(224,64,251,.6)",letterSpacing:".08em",textTransform:"uppercase",margin:"4px 0 10px"}}>🔁 Recurring Bills</div>
-        {recurring.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",marginBottom:10}}>None yet. Tap + → Recurring to add Rent, electricity, subscriptions…</div>}
-        {recurring.map(r=>{
-          const open=openCard===("rec-"+r.id);
-          return(
-            <div key={r.id} className="fade-up" onClick={()=>tapToggle("rec-"+r.id)} style={{background:"rgba(224,64,251,.05)",border:"1px solid "+(open?"rgba(224,64,251,.3)":"rgba(224,64,251,.14)"),borderRadius:15,padding:"13px",marginBottom:10,cursor:"pointer"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div><div style={{fontSize:14,fontWeight:700}}>{r.label}</div><div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{r.category} · Due day {r.dueDay}</div></div>
-                <div className="mono" style={{fontSize:16,fontWeight:700,color:"#e040fb"}}>{fmtK(r.amount)}/mo</div>
-              </div>
-              {open&&(
-                <div onClick={e=>e.stopPropagation()}>
-                  <ActionBar onEdit={()=>setEditRec({...r,amount:String(r.amount),dueDay:String(r.dueDay)})} onDelete={()=>setConfirmDel({type:"recurring",id:r.id,label:r.label})}/>
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>Credit Cards</div>
-        {cards.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",marginBottom:8}}>No cards yet. Tap + to add one.</div>}
-        <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:4}}>
-          {cards.map(c=>{
-            const open=openCard===("card-"+c.id);
+        <div onClick={()=>togSec("recurring")} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(224,64,251,.06)",border:"1px solid rgba(224,64,251,.16)",borderRadius:12,padding:"11px 14px",marginBottom:openPaySec.recurring?10:0,cursor:"pointer"}}>
+          <div style={{fontSize:12,fontWeight:800,color:"#e040fb",letterSpacing:".06em",textTransform:"uppercase"}}>🔁 Recurring Bills</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span className="mono" style={{fontSize:12,color:"rgba(224,64,251,.7)"}}>{recurring.length} bill{recurring.length!==1?"s":""}</span>
+            <span style={{color:"#e040fb",fontSize:14}}>{openPaySec.recurring?"▾":"▸"}</span>
+          </div>
+        </div>
+        {openPaySec.recurring&&(<>
+          {recurring.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",marginBottom:10}}>None yet. Tap + → Recurring to add Rent, electricity, subscriptions…</div>}
+          {recurring.map(r=>{
+            const open=openCard===("rec-"+r.id);
             return(
-              <div key={c.id} style={{flexShrink:0,width:235}}>
-                <div onClick={()=>tapToggle("card-"+c.id)} style={{borderRadius:17,padding:"16px 17px 14px",background:c.color,position:"relative",overflow:"hidden",cursor:"pointer"}}>
-                  <div style={{position:"absolute",right:-16,top:-16,width:68,height:68,borderRadius:"50%",background:"rgba(255,255,255,.12)"}}/>
-                  <div style={{fontSize:9,color:"rgba(255,255,255,.6)",fontWeight:700,letterSpacing:".1em",marginBottom:12}}>CREDIT CARD</div>
-                  <div style={{fontFamily:"JetBrains Mono",fontSize:13,color:"#fff",letterSpacing:".1em",marginBottom:10}}>**** **** **** {c.last4}</div>
-                  <div style={{fontSize:9,color:"rgba(255,255,255,.5)"}}>Card Holder</div>
-                  <div style={{fontSize:12,fontWeight:700,color:"#fff",marginBottom:9}}>{data.profile.name.toUpperCase()}</div>
-                  <div style={{display:"flex",justifyContent:"space-between"}}>
-                    <div><div style={{fontSize:9,color:"rgba(255,255,255,.5)"}}>Outstanding</div><div className="mono" style={{fontSize:12,fontWeight:700,color:"#fff"}}>{fmtK(c.outstanding)}</div></div>
-                    <div style={{textAlign:"right"}}><div style={{fontSize:9,color:"rgba(255,255,255,.5)"}}>Due</div><div style={{fontSize:10,color:"#fff"}}>{fmtDate(c.dueDate)}</div></div>
-                  </div>
+              <div key={r.id} className="fade-up" onClick={()=>tapToggle("rec-"+r.id)} style={{background:"rgba(224,64,251,.05)",border:"1px solid "+(open?"rgba(224,64,251,.3)":"rgba(224,64,251,.14)"),borderRadius:15,padding:"13px",marginBottom:10,cursor:"pointer"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div><div style={{fontSize:14,fontWeight:700}}>{r.label}</div><div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{r.category} · Due day {r.dueDay}</div></div>
+                  <div className="mono" style={{fontSize:16,fontWeight:700,color:"#e040fb"}}>{fmtK(r.amount)}/mo</div>
                 </div>
-                {open&&(<ActionBar onEdit={()=>setEditCard({...c,outstanding:String(c.outstanding),limit:String(c.limit)})} onDelete={()=>setConfirmDel({type:"card",id:c.id,label:c.label})}/>)}
+                {open&&(
+                  <div onClick={e=>e.stopPropagation()}>
+                    <ActionBar onEdit={()=>setEditRec({...r,amount:String(r.amount),dueDay:String(r.dueDay)})} onDelete={()=>setConfirmDel({type:"recurring",id:r.id,label:r.label})}/>
+                  </div>
+                )}
               </div>
             );
           })}
+        </>)}
+
+        {/* Credit Cards — collapsible, vertical list */}
+        <div onClick={()=>togSec("cards")} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(79,195,247,.06)",border:"1px solid rgba(79,195,247,.16)",borderRadius:12,padding:"11px 14px",marginBottom:openPaySec.cards?10:0,cursor:"pointer",marginTop:4}}>
+          <div style={{fontSize:12,fontWeight:800,color:"#4fc3f7",letterSpacing:".06em",textTransform:"uppercase"}}>💳 Credit Cards</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span className="mono" style={{fontSize:12,color:"rgba(79,195,247,.7)"}}>{cards.length} card{cards.length!==1?"s":""}</span>
+            <span style={{color:"#4fc3f7",fontSize:14}}>{openPaySec.cards?"▾":"▸"}</span>
+          </div>
         </div>
+        {openPaySec.cards&&(<>
+          {cards.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",marginBottom:8}}>No cards yet. Tap + to add one.</div>}
+          {cards.map(c=>{
+            const open=openCard===("card-"+c.id);
+            const daysLeft=c.dueDate?daysUntil(new Date(c.dueDate)):null;
+            return(
+              <div key={c.id} className="fade-up" onClick={()=>tapToggle("card-"+c.id)} style={{background:"rgba(79,195,247,.05)",border:"1px solid "+(open?"rgba(79,195,247,.35)":"rgba(79,195,247,.14)"),borderRadius:15,padding:"14px 15px",marginBottom:10,cursor:"pointer"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:15,fontWeight:800,color:"#fff"}}>{c.label||"Credit Card"}</div>
+                    <div style={{fontSize:11,color:"rgba(255,255,255,.4)",marginTop:2}}>{c.bank||""}{c.bank&&c.last4?" · ":""}{c.last4?"•••• "+c.last4:""}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div className="mono" style={{fontSize:16,fontWeight:700,color:"#ff5370"}}>{fmtK(c.outstanding)}</div>
+                    <div style={{fontSize:10,color:daysLeft!==null&&daysLeft<=2?"#ff5370":daysLeft!==null&&daysLeft<=5?"#ffd700":"rgba(255,255,255,.35)",marginTop:2}}>{c.dueDate?`Due ${fmtDate(c.dueDate)}`:"No due date"}{daysLeft!==null?` · ${dueLabel(daysLeft)}`:""}</div>
+                  </div>
+                </div>
+                {open&&(
+                  <div onClick={e=>e.stopPropagation()}>
+                    <ActionBar onEdit={()=>setEditCard({...c,bank:c.bank||"",outstanding:String(c.outstanding),limit:String(c.limit||100000)})} onDelete={()=>setConfirmDel({type:"card",id:c.id,label:c.label})}/>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </>)}
       </div>
 
       {showAdd&&(
@@ -2135,7 +2168,8 @@ function EMIDebt({data,setData}){
             </>)}
           </>)}
           {lF.type==="card"&&(<>
-            <FI label="Card Label" value={lF.label} onChange={e=>setLF(f=>({...f,label:e.target.value}))} placeholder="HDFC Platinum"/>
+            <FI label="Bank Name" value={lF.bank} onChange={e=>setLF(f=>({...f,bank:e.target.value}))} placeholder="IndusInd / HDFC / SBI"/>
+            <FI label="Card Name / Label" value={lF.label} onChange={e=>setLF(f=>({...f,label:e.target.value}))} placeholder="Platinum / Gold / Classic"/>
             <FI label="Last 4 Digits" value={lF.last4} onChange={e=>setLF(f=>({...f,last4:e.target.value}))} placeholder="1290" maxLength={4}/>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
               <FI label="Outstanding (₹)" type="number" value={lF.outstanding} onChange={e=>setLF(f=>({...f,outstanding:e.target.value}))} placeholder="18500"/>
@@ -2194,7 +2228,8 @@ function EMIDebt({data,setData}){
       {/* Edit Card Modal */}
       {editCard&&(
         <Modal title="✏ Edit Credit Card" onClose={()=>setEditCard(null)}>
-          <FI label="Card Label" value={editCard.label} onChange={e=>setEditCard(f=>({...f,label:e.target.value}))}/>
+          <FI label="Bank Name" value={editCard.bank||""} onChange={e=>setEditCard(f=>({...f,bank:e.target.value}))}/>
+          <FI label="Card Name / Label" value={editCard.label} onChange={e=>setEditCard(f=>({...f,label:e.target.value}))}/>
           <FI label="Last 4 Digits" value={editCard.last4} onChange={e=>setEditCard(f=>({...f,last4:e.target.value}))} maxLength={4}/>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             <FI label="Outstanding (₹)" type="number" value={editCard.outstanding} onChange={e=>setEditCard(f=>({...f,outstanding:e.target.value}))}/>
