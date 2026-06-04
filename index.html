@@ -112,6 +112,56 @@ const USD_CATS = ["T Gifts","C Gifts"];
 const INCOME_CATS = ["T Gifts","T Cash","C Gifts","C Cash","Other Income"];
 const EXPENSE_CATS = ["Rent","House Maintenance","Utilities","Groceries","Pet Maintenance","Transport & Travel","Dining Out","Online Food Order","Health","Entertainment","Shopping","Education","Other"];
 
+// Guess an expense category from a merchant/description string
+const guessCat = (mRaw) => {
+  const m=(mRaw||"").toLowerCase();
+  const has=(...w)=>w.some(x=>m.includes(x));
+  if(has("swiggy","zomato","eatfit","faasos","fasoos","dominos","pizza","kfc","mcdonald","burger")) return "Online Food Order";
+  if(has("hotel","restaurant","chutney","chutnees","dhaba","cafe","coffee","biryani","kitchen","food court","darshini","tiffin","mess")) return "Dining Out";
+  if(has("pvr","inox","bookmyshow","cinema","movie","netflix","spotify","hotstar","prime video","theatre","gaming")) return "Entertainment";
+  if(has("amazon","flipkart","myntra","ajio","meesho","reliance","dmart","d-mart","lifestyle","shoppers","store","mart","mall","decathlon","croma","nykaa")) return "Shopping";
+  if(has("uber","ola","rapido","irctc","petrol","fuel","diesel","metro","redbus","makemytrip","goibibo","indigo","airlines","airport","toll","fastag","travel")) return "Transport & Travel";
+  if(has("pharma","pharmacy","medical","hospital","clinic","apollo","chemist","diagnostic","lab","medplus","health")) return "Health";
+  if(has("bigbasket","blinkit","zepto","grofers","grocer","kirana","supermarket","jiomart","fresh")) return "Groceries";
+  if(has("electricity","water","gas","recharge","jio","airtel","vodafone","vi ","bsnl","broadband","wifi","dth","postpaid","prepaid","bill","utility","tata power")) return "Utilities";
+  if(has("school","college","university","course","tuition","udemy","coursera","education","academy","class")) return "Education";
+  if(has("rent","lease","landlord")) return "Rent";
+  return "Other";
+};
+
+// Parse a bank/credit-card SMS or email into {amount,date,merchant,type,cat,raw}
+const parseSMS = (text) => {
+  const t=(text||"").replace(/\s+/g," ").trim();
+  const low=t.toLowerCase();
+  // amount: INR 210.00 / Rs.2,000 / Rs 450
+  let amount=null;
+  const am=t.match(/(?:inr|rs\.?|₹)\s*([\d,]+(?:\.\d{1,2})?)/i);
+  if(am) amount=Number(am[1].replace(/,/g,""));
+  // date: dd-mm-yyyy or dd-mm-yy or dd-Mon-yy
+  let date=today();
+  const dNum=t.match(/(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})/);
+  const dMon=t.match(/(\d{1,2})[-\/]([A-Za-z]{3})[-\/](\d{2,4})/);
+  const mm={jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12"};
+  if(dNum){ let[_,d,mo,y]=dNum; if(y.length===2)y="20"+y; date=`${y}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}`; }
+  else if(dMon){ let[_,d,mo,y]=dMon; if(y.length===2)y="20"+y; const mn=mm[mo.toLowerCase()]||"01"; date=`${y}-${mn}-${d.padStart(2,"0")}`; }
+  // type: default expense; income only if clearly a credit (and not "credit card")
+  const expenseHit=/(debit|spent|withdrawn|pur\/|p2m|purchase|is approved|approved\.|paid)/i.test(low);
+  const incomeHit=/(credited|received|deposited|salary|refund|cr\b)/i.test(low) && !/credit card/i.test(low);
+  const type=(incomeHit && !expenseHit)?"income":"expense";
+  // merchant
+  let merchant="";
+  let m;
+  if(m=t.match(/at\s+(.+?)\s+is\s+approved/i)) merchant=m[1];
+  else if(m=t.match(/UPI\/[A-Za-z0-9]+\/\d+\/([^\/]+?)(?:\.|$|available|ref)/i)) merchant=m[1];
+  else if(m=t.match(/PUR\/([A-Za-z0-9 ]+?)\//i)) merchant=m[1];
+  else if(m=t.match(/(?:at|to|info:|\/)\s*([A-Za-z][A-Za-z0-9 .&'-]{2,40})/i)) merchant=m[1];
+  merchant=merchant.replace(/\b(com|ltd|limited|pvt|private)\b/gi,"").replace(/\s+/g," ").trim();
+  // tidy title case for ALLCAPS merchants
+  if(merchant && merchant===merchant.toUpperCase()) merchant=merchant.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
+  const cat = type==="income" ? "Other Income" : guessCat(merchant+" "+t);
+  return {amount,date,merchant,type,cat,ok:!!amount};
+};
+
 const INIT = {
   profile:{ name:"Sudhakar Reddy", email:"" },
   usdRate: 83.5,
@@ -182,6 +232,7 @@ const INIT = {
   metalSchemes:[],
   loans:[],
   cards:[],
+  recurring:[],
   bankBalances:[],
   physicalGold:[],
   physicalSilver:[],
@@ -194,6 +245,36 @@ const fmt  = (n) => `₹${Math.abs(n).toLocaleString("en-IN")}`;
 const fmtK = (n) => n>=10000000?`₹${(n/10000000).toFixed(2)}Cr`:n>=100000?`₹${(n/100000).toFixed(1)}L`:n>=1000?`₹${(n/1000).toFixed(1)}k`:`₹${Math.round(n)}`;
 const today = () => new Date().toISOString().split("T")[0];
 const fmtDate = (d) => new Date(d).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"2-digit"});
+// Midnight today
+const _midnight = () => { const n=new Date(); return new Date(n.getFullYear(),n.getMonth(),n.getDate()); };
+// Next occurrence of a monthly due-day (1-31), as a Date at midnight
+const nextDueByDay = (dueDay) => {
+  const t=_midnight(); const y=t.getFullYear(), m=t.getMonth();
+  let due=new Date(y,m,dueDay);
+  if(due < t) due=new Date(y,m+1,dueDay);
+  return due;
+};
+const daysUntil = (dateObj) => Math.round((new Date(dateObj.getFullYear(),dateObj.getMonth(),dateObj.getDate()) - _midnight())/86400000);
+const cycleOf = (dateObj) => `${dateObj.getFullYear()}-${String(dateObj.getMonth()+1).padStart(2,"0")}`;
+// Build the list of payments due within `windowDays` and not marked paid for the current cycle.
+const pendingPayments = (data, windowDays=5) => {
+  const out=[];
+  (data.loans||[]).filter(l=>l.secured).forEach(l=>{
+    const due=nextDueByDay(l.dueDay||1), cyc=cycleOf(due), dd=daysUntil(due);
+    if(l.lastPaid!==cyc && dd<=windowDays) out.push({key:"loan-"+l.id,kind:"loan",id:l.id,label:l.label,sub:l.lender||"Loan EMI",amount:l.emi||0,due,days:dd,cycle:cyc,color:l.color||"#ff5370"});
+  });
+  (data.recurring||[]).forEach(r=>{
+    const due=nextDueByDay(r.dueDay||1), cyc=cycleOf(due), dd=daysUntil(due);
+    if(r.lastPaid!==cyc && dd<=windowDays) out.push({key:"rec-"+r.id,kind:"recurring",id:r.id,label:r.label,sub:r.category||"Recurring",amount:r.amount||0,due,days:dd,cycle:cyc,color:"#e040fb"});
+  });
+  (data.cards||[]).forEach(c=>{
+    if(!c.dueDate) return;
+    const due=new Date(c.dueDate), dd=daysUntil(due), cyc=c.dueDate;
+    if(c.lastPaid!==cyc && dd<=windowDays) out.push({key:"card-"+c.id,kind:"card",id:c.id,label:c.label||("Card ••"+(c.last4||"")),sub:"Credit Card",amount:c.outstanding||0,due,days:dd,cycle:cyc,color:"#4fc3f7"});
+  });
+  return out.sort((a,b)=>a.due-b.due);
+};
+const dueLabel = (days) => days<0?`${Math.abs(days)}d overdue`:days===0?"Due today":days===1?"Due tomorrow":`Due in ${days} days`;
 const monthLabel = (m) => { const [y,mo]=m.split("-"); return `${["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+mo]} '${y.slice(2)}`; };
 // Mutual fund hybrid model: if a fund has monthly SIP entries, sum them; otherwise use flat invested/units.
 const mfInvested = (m) => (m.sips&&m.sips.length)?m.sips.reduce((s,x)=>s+(Number(x.amount)||0),0):(Number(m.invested)||0);
@@ -331,6 +412,12 @@ function Dashboard({data,setData,nav}){
   const bankTotal=bankBalances.reduce((s,b)=>s+b.balance,0);
   const totalDebt=loans.reduce((s,l)=>s+l.remaining,0)+cards.reduce((s,c)=>s+c.outstanding,0);
   const netWorth=stockVal+mfVal+goldVal+silverVal+bankTotal+(totalIn-totalOut)-totalDebt;
+  const pending=pendingPayments(data,5);
+  function markPaid(p){
+    if(p.kind==="loan") setData(d=>({...d,loans:d.loans.map(l=>l.id===p.id?{...l,lastPaid:p.cycle}:l)}));
+    else if(p.kind==="recurring") setData(d=>({...d,recurring:d.recurring.map(r=>r.id===p.id?{...r,lastPaid:p.cycle}:r)}));
+    else if(p.kind==="card") setData(d=>({...d,cards:d.cards.map(c=>c.id===p.id?{...c,lastPaid:p.cycle}:c)}));
+  }
 
   const isUSD=USD_CATS.includes(txF.cat);
 
@@ -453,19 +540,22 @@ function Dashboard({data,setData,nav}){
             <span style={{fontSize:18}}>{openSection==="payments"?"▾":"▸"}</span>
             <span style={{fontSize:19,fontWeight:800,color:"#ff5370"}}>Upcoming Payments</span>
           </div>
-          <span style={{background:"rgba(255,83,112,.18)",color:"#ff5370",fontSize:13,fontWeight:800,padding:"4px 12px",borderRadius:20}}>{loans.length} Pending</span>
+          <span style={{background:"rgba(255,83,112,.18)",color:"#ff5370",fontSize:13,fontWeight:800,padding:"4px 12px",borderRadius:20}}>{pending.length} Pending</span>
         </div>
         {openSection==="payments"&&(
           <div style={{marginTop:8}}>
-            {loans.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:"8px 4px"}}>No upcoming payments. Add loans in the EMI tab.</div>}
-            {loans.map(l=>(
-              <div key={l.id} style={{background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.06)",borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12}}>
-                <div style={{width:38,height:38,borderRadius:11,background:"rgba(255,255,255,.07)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🏦</div>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:14,fontWeight:600}}>{l.label}</div>
-                  <div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>Due day {l.dueDay} · {l.secured?"Secured":"Unsecured"}</div>
+            {pending.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:"8px 4px"}}>Nothing due in the next 5 days. 🎉</div>}
+            {pending.map(p=>(
+              <div key={p.key} style={{background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.06)",borderRadius:14,padding:"12px 14px",marginBottom:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{width:38,height:38,borderRadius:11,background:"rgba(255,255,255,.07)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>{p.kind==="card"?"💳":p.kind==="recurring"?"🔁":"🏦"}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,fontWeight:600}}>{p.label}</div>
+                    <div style={{fontSize:10,color:p.days<0?"#ff5370":p.days<=2?"#ffd700":"rgba(255,255,255,.3)"}}>{dueLabel(p.days)} · {p.sub}</div>
+                  </div>
+                  <div className="mono" style={{fontSize:14,fontWeight:700,color:p.color}}>{fmtK(p.amount)}</div>
                 </div>
-                <div className="mono" style={{fontSize:14,fontWeight:700,color:l.color||"#ff5370"}}>{fmtK(l.emi)}</div>
+                <button onClick={()=>markPaid(p)} style={{width:"100%",marginTop:9,padding:"8px",borderRadius:9,background:"rgba(0,200,120,.12)",border:"1px solid rgba(0,200,120,.3)",color:"#00c878",fontSize:12,fontWeight:700}}>✓ Mark Paid</button>
               </div>
             ))}
           </div>
@@ -548,8 +638,12 @@ function CashFlow({data,setData}){
   const [showAdd,setShowAdd]=useState(false);
   const [showFilters,setShowFilters]=useState(false);
   const [editTx,setEditTx]=useState(null);
+  const [openTx,setOpenTx]=useState(null);
   const [confirmDel,setConfirmDel]=useState(null);
   const [txF,setTxF]=useState({type:"income",cat:"T Gifts",label:"",amountUSD:"",amount:"",date:today(),note:""});
+  const [addMode,setAddMode]=useState("quick"); // quick | full | paste
+  const [smsText,setSmsText]=useState("");
+  const [smsMsg,setSmsMsg]=useState("");
 
   const isUSD=USD_CATS.includes(txF.cat);
   const isEditUSD=editTx&&USD_CATS.includes(editTx.cat);
@@ -578,8 +672,27 @@ function CashFlow({data,setData}){
     const tx={id:uid(),type:txF.type,cat:txF.cat,label:txF.label,amount:amt,date:txF.date,note:txF.note};
     if(isUSD){tx.amountUSD=Number(txF.amountUSD);tx.rateUsed=data.usdRate;}
     setData(d=>({...d,transactions:[tx,...d.transactions]}));
+    closeAdd();
+  }
+  function closeAdd(){
     setShowAdd(false);
     setTxF({type:"income",cat:"T Gifts",label:"",amountUSD:"",amount:"",date:today(),note:""});
+    setSmsText(""); setSmsMsg("");
+  }
+  function quickAdd(cat){
+    const amt=Number(txF.amount);
+    if(!amt){ setSmsMsg("Enter an amount first."); return; }
+    const type=INCOME_CATS.includes(cat)?"income":"expense";
+    const tx={id:uid(),type,cat,label:cat,amount:amt,date:today(),note:""};
+    setData(d=>({...d,transactions:[tx,...d.transactions]}));
+    closeAdd();
+  }
+  function applySMS(){
+    const r=parseSMS(smsText);
+    if(!r.ok){ setSmsMsg("Couldn't find an amount. Paste the full message, or use Full entry."); return; }
+    setTxF(f=>({...f,type:r.type,cat:r.cat,date:r.date,amount:String(r.amount),amountUSD:"",label:r.merchant||""}));
+    setAddMode("full");
+    setSmsMsg(`Found ₹${r.amount}${r.merchant?` · ${r.merchant}`:""} — review & Save.`);
   }
 
   function saveEdit(){
@@ -688,8 +801,9 @@ function CashFlow({data,setData}){
             {grouped[date].map((t,i)=>{
               const isIn=t.type==="income";
               const c=isIn?"#00f0dc":"#ff5370";
+              const open=openTx===t.id;
               return(
-                <div key={t.id} className="fade-up" style={{background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.06)",borderRadius:13,padding:"11px 13px",marginBottom:7,animationDelay:`${i*.04}s`}}>
+                <div key={t.id} className="fade-up" onClick={()=>setOpenTx(o=>o===t.id?null:t.id)} style={{background:"rgba(255,255,255,.03)",border:"1px solid "+(open?"rgba(0,240,220,.25)":"rgba(255,255,255,.06)"),borderRadius:13,padding:"11px 13px",marginBottom:7,animationDelay:`${i*.04}s`,cursor:"pointer"}}>
                   <div style={{display:"flex",alignItems:"center",gap:11}}>
                     <div style={{width:36,height:36,borderRadius:10,background:`rgba(${isIn?"0,240,220":"255,83,112"},.1)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0}}>{isIn?"💰":"💸"}</div>
                     <div style={{flex:1,minWidth:0}}>
@@ -698,7 +812,11 @@ function CashFlow({data,setData}){
                     </div>
                     <div className="mono" style={{fontSize:14,fontWeight:700,color:c,flexShrink:0}}>{isIn?"+":"-"}{fmtK(t.amount)}</div>
                   </div>
-                  <ActionBar onEdit={()=>setEditTx({...t,amount:String(t.amount),amountUSD:String(t.amountUSD||"")})} onDelete={()=>setConfirmDel(t)}/>
+                  {open&&(
+                    <div onClick={e=>e.stopPropagation()}>
+                      <ActionBar onEdit={()=>setEditTx({...t,amount:String(t.amount),amountUSD:String(t.amountUSD||"")})} onDelete={()=>setConfirmDel(t)}/>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -709,23 +827,53 @@ function CashFlow({data,setData}){
       <button onClick={()=>setShowAdd(true)} style={{position:"fixed",bottom:90,right:20,display:"flex",alignItems:"center",gap:7,padding:"12px 18px",borderRadius:18,background:"linear-gradient(135deg,#00f0dc,#00b8d9)",border:"none",color:"#000",fontSize:14,fontWeight:700,zIndex:50,boxShadow:"0 8px 22px rgba(0,240,220,.38)"}}>+ Add</button>
 
       {showAdd&&(
-        <Modal title="Add Transaction" onClose={()=>setShowAdd(false)}>
-          <TypeToggle val={txF.type} onChange={t=>setTxF(f=>({...f,type:t,cat:t==="income"?INCOME_CATS[0]:EXPENSE_CATS[0]}))}/>
-          <FS label="Category" value={txF.cat} onChange={e=>setTxF(f=>({...f,cat:e.target.value}))} options={txF.type==="income"?INCOME_CATS:EXPENSE_CATS}/>
-          <FI label="Date" type="date" value={txF.date} onChange={e=>setTxF(f=>({...f,date:e.target.value}))}/>
-          <FI label="Description" value={txF.label} onChange={e=>setTxF(f=>({...f,label:e.target.value}))} placeholder="Description"/>
-          {isUSD?(
-            <>
-              <div style={{background:"rgba(255,200,0,.07)",border:"1px solid rgba(255,200,0,.18)",borderRadius:10,padding:"9px 12px",marginBottom:10,fontSize:12,color:"rgba(255,213,0,.75)"}}>
-                💱 Converts at ₹{data.usdRate}/$
-              </div>
-              <FI label="Amount in USD ($)" type="number" value={txF.amountUSD} onChange={e=>setTxF(f=>({...f,amountUSD:e.target.value}))} placeholder="503"/>
-              {txF.amountUSD&&<div style={{fontSize:12,color:"#00f0dc",marginBottom:8,marginTop:-6}}>= ₹{(Number(txF.amountUSD)*data.usdRate).toLocaleString("en-IN")}</div>}
-            </>
-          ):(
-            <FI label="Amount (₹)" type="number" value={txF.amount} onChange={e=>setTxF(f=>({...f,amount:e.target.value}))} placeholder="0"/>
-          )}
-          <Btn onClick={addTx}>Add Transaction</Btn>
+        <Modal title="Add Transaction" onClose={closeAdd}>
+          <div style={{display:"flex",gap:6,marginBottom:14,background:"rgba(255,255,255,.04)",borderRadius:12,padding:4}}>
+            {[["quick","⚡ Quick"],["paste","📋 Paste SMS"],["full","✍️ Full"]].map(([id,lbl])=>(
+              <button key={id} onClick={()=>{setAddMode(id);setSmsMsg("");}} style={{flex:1,padding:"8px 4px",borderRadius:9,border:"none",background:addMode===id?"rgba(0,240,220,.15)":"transparent",color:addMode===id?"#00f0dc":"rgba(255,255,255,.4)",fontSize:12,fontWeight:700}}>{lbl}</button>
+            ))}
+          </div>
+
+          {addMode==="quick"&&(<>
+            <FI label="Amount (₹)" type="number" value={txF.amount} onChange={e=>{setTxF(f=>({...f,amount:e.target.value}));setSmsMsg("");}} placeholder="0"/>
+            <div style={{fontSize:10,color:"rgba(255,255,255,.35)",fontWeight:600,letterSpacing:".07em",textTransform:"uppercase",margin:"6px 0 7px"}}>Tap a category to save instantly</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:7,marginBottom:6}}>
+              {EXPENSE_CATS.map(c=>(
+                <button key={c} onClick={()=>quickAdd(c)} style={{padding:"9px 12px",borderRadius:11,background:"rgba(255,83,112,.08)",border:"1px solid rgba(255,83,112,.2)",color:"#ff8fa3",fontSize:12,fontWeight:600}}>{c}</button>
+              ))}
+              {INCOME_CATS.map(c=>(
+                <button key={c} onClick={()=>quickAdd(c)} style={{padding:"9px 12px",borderRadius:11,background:"rgba(0,240,220,.08)",border:"1px solid rgba(0,240,220,.2)",color:"#00f0dc",fontSize:12,fontWeight:600}}>{c}</button>
+              ))}
+            </div>
+            {smsMsg&&<div style={{fontSize:12,color:"#ffd700",marginTop:4}}>{smsMsg}</div>}
+            <div style={{fontSize:10,color:"rgba(255,255,255,.3)",marginTop:8}}>Pink = expense · Cyan = income. Saves with today's date.</div>
+          </>)}
+
+          {addMode==="paste"&&(<>
+            <div style={{fontSize:10,color:"rgba(255,255,255,.35)",fontWeight:600,letterSpacing:".07em",textTransform:"uppercase",marginBottom:5}}>Paste bank / card SMS or email</div>
+            <textarea value={smsText} onChange={e=>setSmsText(e.target.value)} placeholder="Paste the full alert here…" rows={5} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"11px 13px",color:"#e8edf5",fontSize:13,fontFamily:"Outfit",outline:"none",resize:"vertical",marginBottom:10}}/>
+            <Btn onClick={applySMS} col="#7c3aed" tc="#fff">🔍 Read & Auto-fill</Btn>
+            {smsMsg&&<div style={{fontSize:12,color:"#ffd700",marginTop:8}}>{smsMsg}</div>}
+            <div style={{fontSize:10,color:"rgba(255,255,255,.3)",marginTop:10}}>Reads amount, date, merchant & guesses the category — then you review on the Full tab before saving. Your message text is never sent anywhere.</div>
+          </>)}
+
+          {addMode==="full"&&(<>
+            {smsMsg&&<div style={{fontSize:12,color:"#00f0dc",background:"rgba(0,240,220,.06)",border:"1px solid rgba(0,240,220,.15)",borderRadius:9,padding:"8px 11px",marginBottom:12}}>{smsMsg}</div>}
+            <TypeToggle val={txF.type} onChange={t=>setTxF(f=>({...f,type:t,cat:t==="income"?INCOME_CATS[0]:EXPENSE_CATS[0]}))}/>
+            <FS label="Category" value={txF.cat} onChange={e=>setTxF(f=>({...f,cat:e.target.value}))} options={txF.type==="income"?INCOME_CATS:EXPENSE_CATS}/>
+            <FI label="Date" type="date" value={txF.date} onChange={e=>setTxF(f=>({...f,date:e.target.value}))}/>
+            <FI label="Description" value={txF.label} onChange={e=>setTxF(f=>({...f,label:e.target.value}))} placeholder="Description"/>
+            {isUSD?(
+              <>
+                <div style={{background:"rgba(255,200,0,.07)",border:"1px solid rgba(255,200,0,.18)",borderRadius:10,padding:"9px 12px",marginBottom:10,fontSize:12,color:"rgba(255,213,0,.75)"}}>💱 Converts at ₹{data.usdRate}/$</div>
+                <FI label="Amount in USD ($)" type="number" value={txF.amountUSD} onChange={e=>setTxF(f=>({...f,amountUSD:e.target.value}))} placeholder="503"/>
+                {txF.amountUSD&&<div style={{fontSize:12,color:"#00f0dc",marginBottom:8,marginTop:-6}}>= ₹{(Number(txF.amountUSD)*data.usdRate).toLocaleString("en-IN")}</div>}
+              </>
+            ):(
+              <FI label="Amount (₹)" type="number" value={txF.amount} onChange={e=>setTxF(f=>({...f,amount:e.target.value}))} placeholder="0"/>
+            )}
+            <Btn onClick={addTx}>Add Transaction</Btn>
+          </>)}
         </Modal>
       )}
 
@@ -1722,32 +1870,51 @@ function Investments({data,setData}){
 // EMI & DEBT
 // ══════════════════════════════════════════════════════════════════════════════
 function EMIDebt({data,setData}){
-  const {loans,cards}=data;
+  const {loans,cards,recurring=[]}=data;
   const [showAdd,setShowAdd]=useState(false);
   const [editLoan,setEditLoan]=useState(null);
   const [editCard,setEditCard]=useState(null);
+  const [editRec,setEditRec]=useState(null);
   const [confirmDel,setConfirmDel]=useState(null); // {type,id,label}
   const [openCard,setOpenCard]=useState(null);
   const tapToggle=(key)=>setOpenCard(c=>c===key?null:key);
-  const [lF,setLF]=useState({type:"loan",label:"",lender:"",total:"",remaining:"",emi:"",dueDay:"",secured:true,color:"#00f0dc",last4:"",outstanding:"",limit:"",dueDate:today()});
+  const [lF,setLF]=useState({type:"loan",label:"",lender:"",total:"",remaining:"",emi:"",dueDay:"",secured:true,color:"#00f0dc",last4:"",outstanding:"",limit:"",dueDate:today(),recLabel:"",recAmount:"",recDueDay:"",recCat:"Rent"});
   const totalDebt=loans.reduce((s,l)=>s+l.remaining,0)+cards.reduce((s,c)=>s+c.outstanding,0);
   const days=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()+i-1);return d;});
+  const pending=pendingPayments(data,5);
+  function markPaid(p){
+    if(p.kind==="loan") setData(d=>({...d,loans:d.loans.map(l=>l.id===p.id?{...l,lastPaid:p.cycle}:l)}));
+    else if(p.kind==="recurring") setData(d=>({...d,recurring:d.recurring.map(r=>r.id===p.id?{...r,lastPaid:p.cycle}:r)}));
+    else if(p.kind==="card") setData(d=>({...d,cards:d.cards.map(c=>c.id===p.id?{...c,lastPaid:p.cycle}:c)}));
+  }
 
   function addDebt(){
     if(lF.type==="loan"){
-      if(!lF.label||!lF.remaining||!lF.emi) return;
-      setData(d=>({...d,loans:[...d.loans,{id:uid(),label:lF.label,lender:lF.lender,total:Number(lF.total||lF.remaining),remaining:Number(lF.remaining),emi:Number(lF.emi),dueDay:Number(lF.dueDay||5),secured:lF.secured==="true"||lF.secured===true,color:lF.color}]}));
-    } else {
+      const secured=lF.secured==="true"||lF.secured===true;
+      if(secured){
+        if(!lF.label||!lF.remaining||!lF.emi) return;
+        setData(d=>({...d,loans:[...d.loans,{id:uid(),label:lF.label,lender:lF.lender,total:Number(lF.total||lF.remaining),remaining:Number(lF.remaining),emi:Number(lF.emi),dueDay:Number(lF.dueDay||5),secured:true,color:lF.color}]}));
+      } else {
+        if(!lF.label||!lF.remaining) return; // unsecured: balance only
+        setData(d=>({...d,loans:[...d.loans,{id:uid(),label:lF.label,lender:lF.lender,total:Number(lF.remaining),remaining:Number(lF.remaining),emi:0,dueDay:0,secured:false,color:"#ff5370"}]}));
+      }
+    } else if(lF.type==="card") {
       if(!lF.label||!lF.outstanding) return;
       setData(d=>({...d,cards:[...d.cards,{id:uid(),label:lF.label,last4:lF.last4||"0000",outstanding:Number(lF.outstanding),limit:Number(lF.limit||100000),dueDate:lF.dueDate,color:"linear-gradient(135deg,#00f0dc,#7c3aed)"}]}));
+    } else { // recurring
+      if(!lF.recLabel||!lF.recAmount) return;
+      setData(d=>({...d,recurring:[...(d.recurring||[]),{id:uid(),label:lF.recLabel,amount:Number(lF.recAmount),dueDay:Number(lF.recDueDay||1),category:lF.recCat}]}));
     }
     setShowAdd(false);
-    setLF({type:"loan",label:"",lender:"",total:"",remaining:"",emi:"",dueDay:"",secured:true,color:"#00f0dc",last4:"",outstanding:"",limit:"",dueDate:today()});
+    setLF({type:"loan",label:"",lender:"",total:"",remaining:"",emi:"",dueDay:"",secured:true,color:"#00f0dc",last4:"",outstanding:"",limit:"",dueDate:today(),recLabel:"",recAmount:"",recDueDay:"",recCat:"Rent"});
   }
 
   function saveEditLoan(){
     if(!editLoan.label) return;
-    setData(d=>({...d,loans:d.loans.map(l=>l.id===editLoan.id?{...l,label:editLoan.label,lender:editLoan.lender,total:Number(editLoan.total||editLoan.remaining),remaining:Number(editLoan.remaining),emi:Number(editLoan.emi),dueDay:Number(editLoan.dueDay||5),secured:editLoan.secured==="true"||editLoan.secured===true}:l)}));
+    const secured=editLoan.secured==="true"||editLoan.secured===true;
+    setData(d=>({...d,loans:d.loans.map(l=>l.id===editLoan.id?(secured
+      ?{...l,label:editLoan.label,lender:editLoan.lender,total:Number(editLoan.total||editLoan.remaining),remaining:Number(editLoan.remaining),emi:Number(editLoan.emi),dueDay:Number(editLoan.dueDay||5),secured:true}
+      :{...l,label:editLoan.label,lender:editLoan.lender,total:Number(editLoan.remaining),remaining:Number(editLoan.remaining),emi:0,dueDay:0,secured:false}):l)}));
     setEditLoan(null);
   }
   function saveEditCard(){
@@ -1755,44 +1922,58 @@ function EMIDebt({data,setData}){
     setData(d=>({...d,cards:d.cards.map(c=>c.id===editCard.id?{...c,label:editCard.label,last4:editCard.last4||"0000",outstanding:Number(editCard.outstanding),limit:Number(editCard.limit||100000),dueDate:editCard.dueDate}:c)}));
     setEditCard(null);
   }
+  function saveEditRec(){
+    if(!editRec.label) return;
+    setData(d=>({...d,recurring:d.recurring.map(r=>r.id===editRec.id?{...r,label:editRec.label,amount:Number(editRec.amount||0),dueDay:Number(editRec.dueDay||1),category:editRec.category}:r)}));
+    setEditRec(null);
+  }
   function doDelete(){
     if(!confirmDel) return;
     if(confirmDel.type==="loan") setData(d=>({...d,loans:d.loans.filter(l=>l.id!==confirmDel.id)}));
     else if(confirmDel.type==="card") setData(d=>({...d,cards:d.cards.filter(c=>c.id!==confirmDel.id)}));
+    else if(confirmDel.type==="recurring") setData(d=>({...d,recurring:d.recurring.filter(r=>r.id!==confirmDel.id)}));
     setConfirmDel(null);
   }
 
   return(
     <div className="slide-in" style={{paddingBottom:100}}>
       <div style={{padding:"22px 20px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div style={{fontSize:22,fontWeight:800}}>EMI & Debt</div>
+        <div style={{fontSize:22,fontWeight:800}}>Payables</div>
         <button onClick={()=>setShowAdd(true)} style={{width:36,height:36,borderRadius:10,background:"rgba(0,240,220,.1)",border:"1px solid rgba(0,240,220,.22)",color:"#00f0dc",fontSize:20,fontWeight:700}}>+</button>
       </div>
 
       <div style={{padding:"14px 16px 0",display:"flex",gap:8,overflowX:"auto"}}>
         {days.map((d,i)=>{
           const isToday=d.toDateString()===new Date().toDateString();
-          const hasDue=loans.some(l=>l.dueDay===d.getDate());
+          const hasDue=pending.some(p=>p.due.toDateString()===d.toDateString());
           return(
             <div key={i} style={{flexShrink:0,width:50,padding:"9px 0",borderRadius:13,background:isToday?"#00f0dc":"rgba(255,255,255,.05)",border:isToday?"none":"1px solid rgba(255,255,255,.07)",textAlign:"center",cursor:"pointer"}}>
               <div style={{fontSize:9,color:isToday?"rgba(0,0,0,.5)":"rgba(255,255,255,.35)",fontWeight:600,marginBottom:2}}>{["Su","Mo","Tu","We","Th","Fr","Sa"][d.getDay()]}</div>
               <div style={{fontSize:17,fontWeight:700,color:isToday?"#000":"#fff"}}>{d.getDate()}</div>
-              {hasDue&&<div style={{width:4,height:4,borderRadius:"50%",background:isToday?"#000":"#00f0dc",margin:"3px auto 0"}}/>}
+              {hasDue&&<div style={{width:4,height:4,borderRadius:"50%",background:isToday?"#000":"#ff5370",margin:"3px auto 0"}}/>}
             </div>
           );
         })}
       </div>
 
-      {loans[0]&&(
-        <div style={{margin:"12px 16px 0",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:16,padding:"13px 16px",display:"flex",alignItems:"center",gap:12}}>
-          <span style={{fontSize:22}}>🌸</span>
-          <div style={{flex:1}}>
-            <div style={{color:"#00f0dc",fontWeight:700,fontSize:14}}>Next payment in {loans[0].dueDay} days</div>
-            <div style={{color:"rgba(255,255,255,.4)",fontSize:12}}>{loans[0].label} · {fmtK(loans[0].emi)}</div>
+      {/* Pending in next 5 days */}
+      <div style={{padding:"14px 16px 0"}}>
+        <div style={{fontSize:10,fontWeight:700,color:"rgba(255,83,112,.7)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:9}}>Due within 5 days</div>
+        {pending.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",marginBottom:6}}>Nothing due in the next 5 days. 🎉</div>}
+        {pending.map(p=>(
+          <div key={p.key} style={{background:"rgba(255,83,112,.06)",border:"1px solid rgba(255,83,112,.16)",borderRadius:14,padding:"12px 14px",marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:11}}>
+              <span style={{fontSize:18}}>{p.kind==="card"?"💳":p.kind==="recurring"?"🔁":"🏦"}</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:700}}>{p.label}</div>
+                <div style={{fontSize:10,color:p.days<0?"#ff5370":p.days<=2?"#ffd700":"rgba(255,255,255,.4)"}}>{dueLabel(p.days)} · {fmtDate(p.due)} · {p.sub}</div>
+              </div>
+              <div className="mono" style={{fontSize:15,fontWeight:700,color:p.color}}>{fmtK(p.amount)}</div>
+            </div>
+            <button onClick={()=>markPaid(p)} style={{width:"100%",marginTop:9,padding:"8px",borderRadius:9,background:"rgba(0,200,120,.12)",border:"1px solid rgba(0,200,120,.3)",color:"#00c878",fontSize:12,fontWeight:700}}>✓ Mark Paid</button>
           </div>
-          <button style={{padding:"7px 14px",borderRadius:9,background:"#00f0dc",border:"none",color:"#000",fontWeight:700,fontSize:12}}>Pay Now</button>
-        </div>
-      )}
+        ))}
+      </div>
 
       <div style={{margin:"12px 16px 0",background:"rgba(255,83,112,.07)",border:"1px solid rgba(255,83,112,.14)",borderRadius:14,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div><div style={{fontSize:10,color:"rgba(255,83,112,.6)"}}>Total Outstanding Debt</div><div className="mono" style={{fontSize:20,fontWeight:700,color:"#ff5370"}}>{fmtK(totalDebt)}</div></div>
@@ -1800,46 +1981,87 @@ function EMIDebt({data,setData}){
       </div>
 
       <div style={{padding:"14px 16px 0"}}>
-        {["Secured","Unsecured"].map(type=>{
-          const list=loans.filter(l=>type==="Secured"?l.secured:!l.secured);
-          if(!list.length) return null;
-          return(
-            <div key={type} style={{marginBottom:4}}>
-              <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>{type} Loans</div>
-              {list.map(l=>{
-                const paid=Math.round((1-l.remaining/l.total)*100);
-                const open=openCard===("loan-"+l.id);
-                return(
-                  <div key={l.id} className="fade-up" onClick={()=>tapToggle("loan-"+l.id)} style={{background:"rgba(255,255,255,.03)",border:"1px solid "+(open?"rgba(0,240,220,.25)":"rgba(255,255,255,.07)"),borderRadius:15,padding:"13px",marginBottom:10,cursor:"pointer"}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
-                      <div style={{display:"flex",alignItems:"center",gap:10}}>
-                        <div style={{width:13,height:36,borderRadius:5,background:l.color}}/>
-                        <div><div style={{fontSize:14,fontWeight:700}}>{l.label}</div><div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{l.lender}</div></div>
-                      </div>
-                      <div className="mono" style={{fontSize:16,fontWeight:700}}>{fmtK(l.remaining)}</div>
+        {/* Secured loans — full EMI cards */}
+        {loans.filter(l=>l.secured).length>0&&(
+          <div style={{marginBottom:4}}>
+            <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>Secured Loans</div>
+            {loans.filter(l=>l.secured).map(l=>{
+              const paid=Math.round((1-l.remaining/l.total)*100);
+              const open=openCard===("loan-"+l.id);
+              return(
+                <div key={l.id} className="fade-up" onClick={()=>tapToggle("loan-"+l.id)} style={{background:"rgba(255,255,255,.03)",border:"1px solid "+(open?"rgba(0,240,220,.25)":"rgba(255,255,255,.07)"),borderRadius:15,padding:"13px",marginBottom:10,cursor:"pointer"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{width:13,height:36,borderRadius:5,background:l.color}}/>
+                      <div><div style={{fontSize:14,fontWeight:700}}>{l.label}</div><div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{l.lender}</div></div>
                     </div>
-                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
-                      <span style={{fontSize:10,color:"rgba(255,255,255,.35)"}}>{paid}% paid</span>
-                      <span style={{fontSize:10,color:"rgba(255,255,255,.35)"}}>of {fmtK(l.total)}</span>
-                    </div>
-                    <div style={{height:5,background:"rgba(255,255,255,.07)",borderRadius:3,overflow:"hidden",marginBottom:7}}>
-                      <div style={{width:`${paid}%`,height:"100%",background:l.color,borderRadius:3}}/>
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between"}}>
-                      <span style={{fontSize:10,color:"rgba(255,255,255,.32)"}}>EMI <span className="mono" style={{color:l.color}}>{fmtK(l.emi)}/mo</span></span>
-                      <span style={{fontSize:10,color:"rgba(255,255,255,.32)"}}>Due day {l.dueDay}</span>
-                    </div>
-                    {open&&(
-                      <div onClick={e=>e.stopPropagation()}>
-                        <ActionBar onEdit={()=>setEditLoan({...l,total:String(l.total),remaining:String(l.remaining),emi:String(l.emi),dueDay:String(l.dueDay),secured:String(l.secured)})} onDelete={()=>setConfirmDel({type:"loan",id:l.id,label:l.label})}/>
-                      </div>
-                    )}
+                    <div className="mono" style={{fontSize:16,fontWeight:700}}>{fmtK(l.remaining)}</div>
                   </div>
-                );
-              })}
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <span style={{fontSize:10,color:"rgba(255,255,255,.35)"}}>{paid}% paid</span>
+                    <span style={{fontSize:10,color:"rgba(255,255,255,.35)"}}>of {fmtK(l.total)}</span>
+                  </div>
+                  <div style={{height:5,background:"rgba(255,255,255,.07)",borderRadius:3,overflow:"hidden",marginBottom:7}}>
+                    <div style={{width:`${paid}%`,height:"100%",background:l.color,borderRadius:3}}/>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between"}}>
+                    <span style={{fontSize:10,color:"rgba(255,255,255,.32)"}}>EMI <span className="mono" style={{color:l.color}}>{fmtK(l.emi)}/mo</span></span>
+                    <span style={{fontSize:10,color:"rgba(255,255,255,.32)"}}>Due day {l.dueDay}</span>
+                  </div>
+                  {open&&(
+                    <div onClick={e=>e.stopPropagation()}>
+                      <ActionBar onEdit={()=>setEditLoan({...l,total:String(l.total),remaining:String(l.remaining),emi:String(l.emi),dueDay:String(l.dueDay),secured:"true"})} onDelete={()=>setConfirmDel({type:"loan",id:l.id,label:l.label})}/>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Unsecured loans — balance only */}
+        {loans.filter(l=>!l.secured).length>0&&(
+          <div style={{marginBottom:4}}>
+            <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>Unsecured · Balances</div>
+            {loans.filter(l=>!l.secured).map(l=>{
+              const open=openCard===("loan-"+l.id);
+              return(
+                <div key={l.id} className="fade-up" onClick={()=>tapToggle("loan-"+l.id)} style={{background:"rgba(255,83,112,.05)",border:"1px solid "+(open?"rgba(255,83,112,.3)":"rgba(255,83,112,.14)"),borderRadius:15,padding:"13px",marginBottom:10,cursor:"pointer"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div><div style={{fontSize:14,fontWeight:700}}>{l.label}</div><div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{l.lender||"Unsecured"}</div></div>
+                    <div style={{textAlign:"right"}}><div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>Balance</div><div className="mono" style={{fontSize:16,fontWeight:700,color:"#ff5370"}}>{fmtK(l.remaining)}</div></div>
+                  </div>
+                  {open&&(
+                    <div onClick={e=>e.stopPropagation()}>
+                      <ActionBar onEdit={()=>setEditLoan({...l,total:String(l.remaining),remaining:String(l.remaining),emi:"0",dueDay:"0",secured:"false"})} onDelete={()=>setConfirmDel({type:"loan",id:l.id,label:l.label})}/>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Recurring bills */}
+        <div style={{fontSize:10,fontWeight:700,color:"rgba(224,64,251,.6)",letterSpacing:".08em",textTransform:"uppercase",margin:"4px 0 10px"}}>🔁 Recurring Bills</div>
+        {recurring.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",marginBottom:10}}>None yet. Tap + → Recurring to add Rent, electricity, subscriptions…</div>}
+        {recurring.map(r=>{
+          const open=openCard===("rec-"+r.id);
+          return(
+            <div key={r.id} className="fade-up" onClick={()=>tapToggle("rec-"+r.id)} style={{background:"rgba(224,64,251,.05)",border:"1px solid "+(open?"rgba(224,64,251,.3)":"rgba(224,64,251,.14)"),borderRadius:15,padding:"13px",marginBottom:10,cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div><div style={{fontSize:14,fontWeight:700}}>{r.label}</div><div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{r.category} · Due day {r.dueDay}</div></div>
+                <div className="mono" style={{fontSize:16,fontWeight:700,color:"#e040fb"}}>{fmtK(r.amount)}/mo</div>
+              </div>
+              {open&&(
+                <div onClick={e=>e.stopPropagation()}>
+                  <ActionBar onEdit={()=>setEditRec({...r,amount:String(r.amount),dueDay:String(r.dueDay)})} onDelete={()=>setConfirmDel({type:"recurring",id:r.id,label:r.label})}/>
+                </div>
+              )}
             </div>
           );
         })}
+
         <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>Credit Cards</div>
         {cards.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",marginBottom:8}}>No cards yet. Tap + to add one.</div>}
         <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:4}}>
@@ -1866,24 +2088,29 @@ function EMIDebt({data,setData}){
       </div>
 
       {showAdd&&(
-        <Modal title="Add Debt / EMI" onClose={()=>setShowAdd(false)}>
-          <div style={{display:"flex",gap:7,marginBottom:12}}>
-            {[["loan","Loan / EMI"],["card","Credit Card"]].map(([t,l])=>(
-              <button key={t} onClick={()=>setLF(f=>({...f,type:t}))} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:lF.type===t?"rgba(255,83,112,.18)":"rgba(255,255,255,.06)",color:lF.type===t?"#ff5370":"rgba(255,255,255,.35)",fontWeight:700,fontSize:13}}>{l}</button>
+        <Modal title="Add Payable" onClose={()=>setShowAdd(false)}>
+          <div style={{display:"flex",gap:6,marginBottom:12}}>
+            {[["loan","Loan / EMI"],["card","Credit Card"],["recurring","🔁 Recurring"]].map(([t,l])=>(
+              <button key={t} onClick={()=>setLF(f=>({...f,type:t}))} style={{flex:1,padding:"9px 4px",borderRadius:10,border:"none",background:lF.type===t?"rgba(255,83,112,.18)":"rgba(255,255,255,.06)",color:lF.type===t?"#ff5370":"rgba(255,255,255,.35)",fontWeight:700,fontSize:12}}>{l}</button>
             ))}
           </div>
           {lF.type==="loan"&&(<>
             <FI label="Loan Name" value={lF.label} onChange={e=>setLF(f=>({...f,label:e.target.value}))} placeholder="Home Loan"/>
             <FI label="Lender" value={lF.lender} onChange={e=>setLF(f=>({...f,lender:e.target.value}))} placeholder="HDFC Bank"/>
             <FS label="Type" value={String(lF.secured)} onChange={e=>setLF(f=>({...f,secured:e.target.value==="true"}))} options={[{v:"true",l:"Secured (Home / Car / Gold Loan)"},{v:"false",l:"Unsecured (Personal / Credit)"}]}/>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-              <FI label="Total (₹)" type="number" value={lF.total} onChange={e=>setLF(f=>({...f,total:e.target.value}))} placeholder="2500000"/>
-              <FI label="Remaining (₹)" type="number" value={lF.remaining} onChange={e=>setLF(f=>({...f,remaining:e.target.value}))} placeholder="1420000"/>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-              <FI label="Monthly EMI (₹)" type="number" value={lF.emi} onChange={e=>setLF(f=>({...f,emi:e.target.value}))} placeholder="22500"/>
-              <FI label="Due Day" type="number" value={lF.dueDay} onChange={e=>setLF(f=>({...f,dueDay:e.target.value}))} placeholder="5"/>
-            </div>
+            {(lF.secured==="true"||lF.secured===true)?(<>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <FI label="Total (₹)" type="number" value={lF.total} onChange={e=>setLF(f=>({...f,total:e.target.value}))} placeholder="2500000"/>
+                <FI label="Remaining (₹)" type="number" value={lF.remaining} onChange={e=>setLF(f=>({...f,remaining:e.target.value}))} placeholder="1420000"/>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <FI label="Monthly EMI (₹)" type="number" value={lF.emi} onChange={e=>setLF(f=>({...f,emi:e.target.value}))} placeholder="22500"/>
+                <FI label="Due Day" type="number" value={lF.dueDay} onChange={e=>setLF(f=>({...f,dueDay:e.target.value}))} placeholder="5"/>
+              </div>
+            </>):(<>
+              <FI label="Balance Outstanding (₹)" type="number" value={lF.remaining} onChange={e=>setLF(f=>({...f,remaining:e.target.value}))} placeholder="50000"/>
+              <div style={{background:"rgba(255,83,112,.06)",border:"1px solid rgba(255,83,112,.16)",borderRadius:9,padding:"9px 11px",marginBottom:10,fontSize:11,color:"rgba(255,143,163,.85)"}}>Unsecured loans track only the balance (no monthly EMI). When you pay, edit it and reduce the balance.</div>
+            </>)}
           </>)}
           {lF.type==="card"&&(<>
             <FI label="Card Label" value={lF.label} onChange={e=>setLF(f=>({...f,label:e.target.value}))} placeholder="HDFC Platinum"/>
@@ -1894,6 +2121,15 @@ function EMIDebt({data,setData}){
             </div>
             <FI label="Due Date" type="date" value={lF.dueDate} onChange={e=>setLF(f=>({...f,dueDate:e.target.value}))}/>
           </>)}
+          {lF.type==="recurring"&&(<>
+            <FI label="Bill Name" value={lF.recLabel} onChange={e=>setLF(f=>({...f,recLabel:e.target.value}))} placeholder="House Rent / Netflix / Electricity"/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <FI label="Amount (₹)" type="number" value={lF.recAmount} onChange={e=>setLF(f=>({...f,recAmount:e.target.value}))} placeholder="15000"/>
+              <FI label="Due Day (1-31)" type="number" value={lF.recDueDay} onChange={e=>setLF(f=>({...f,recDueDay:e.target.value}))} placeholder="5"/>
+            </div>
+            <FS label="Category" value={lF.recCat} onChange={e=>setLF(f=>({...f,recCat:e.target.value}))} options={["Rent","House Maintenance","Utilities","Subscriptions","Education","Health","Other"]}/>
+            <div style={{background:"rgba(224,64,251,.06)",border:"1px solid rgba(224,64,251,.16)",borderRadius:9,padding:"9px 11px",marginBottom:10,fontSize:11,color:"rgba(224,64,251,.8)"}}>Shows in Upcoming Payments 5 days before each due day. Mark Paid each month to clear it.</div>
+          </>)}
           <Btn onClick={addDebt} col="#ff5370" tc="#fff">Add</Btn>
         </Modal>
       )}
@@ -1903,16 +2139,33 @@ function EMIDebt({data,setData}){
         <Modal title="✏ Edit Loan" onClose={()=>setEditLoan(null)}>
           <FI label="Loan Name" value={editLoan.label} onChange={e=>setEditLoan(f=>({...f,label:e.target.value}))}/>
           <FI label="Lender" value={editLoan.lender} onChange={e=>setEditLoan(f=>({...f,lender:e.target.value}))}/>
-          <FS label="Type" value={String(editLoan.secured)} onChange={e=>setEditLoan(f=>({...f,secured:e.target.value==="true"}))} options={[{v:"true",l:"Secured (Home / Car / Gold Loan)"},{v:"false",l:"Unsecured (Personal / Credit)"}]}/>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            <FI label="Total (₹)" type="number" value={editLoan.total} onChange={e=>setEditLoan(f=>({...f,total:e.target.value}))}/>
-            <FI label="Remaining (₹)" type="number" value={editLoan.remaining} onChange={e=>setEditLoan(f=>({...f,remaining:e.target.value}))}/>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            <FI label="Monthly EMI (₹)" type="number" value={editLoan.emi} onChange={e=>setEditLoan(f=>({...f,emi:e.target.value}))}/>
-            <FI label="Due Day" type="number" value={editLoan.dueDay} onChange={e=>setEditLoan(f=>({...f,dueDay:e.target.value}))}/>
-          </div>
+          <FS label="Type" value={String(editLoan.secured)} onChange={e=>setEditLoan(f=>({...f,secured:e.target.value}))} options={[{v:"true",l:"Secured (Home / Car / Gold Loan)"},{v:"false",l:"Unsecured (Personal / Credit)"}]}/>
+          {(editLoan.secured==="true"||editLoan.secured===true)?(<>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <FI label="Total (₹)" type="number" value={editLoan.total} onChange={e=>setEditLoan(f=>({...f,total:e.target.value}))}/>
+              <FI label="Remaining (₹)" type="number" value={editLoan.remaining} onChange={e=>setEditLoan(f=>({...f,remaining:e.target.value}))}/>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <FI label="Monthly EMI (₹)" type="number" value={editLoan.emi} onChange={e=>setEditLoan(f=>({...f,emi:e.target.value}))}/>
+              <FI label="Due Day" type="number" value={editLoan.dueDay} onChange={e=>setEditLoan(f=>({...f,dueDay:e.target.value}))}/>
+            </div>
+          </>):(
+            <FI label="Balance Outstanding (₹)" type="number" value={editLoan.remaining} onChange={e=>setEditLoan(f=>({...f,remaining:e.target.value}))}/>
+          )}
           <Btn onClick={saveEditLoan}>Save Changes</Btn>
+        </Modal>
+      )}
+
+      {/* Edit Recurring Modal */}
+      {editRec&&(
+        <Modal title="✏ Edit Recurring Bill" onClose={()=>setEditRec(null)}>
+          <FI label="Bill Name" value={editRec.label} onChange={e=>setEditRec(f=>({...f,label:e.target.value}))}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <FI label="Amount (₹)" type="number" value={editRec.amount} onChange={e=>setEditRec(f=>({...f,amount:e.target.value}))}/>
+            <FI label="Due Day (1-31)" type="number" value={editRec.dueDay} onChange={e=>setEditRec(f=>({...f,dueDay:e.target.value}))}/>
+          </div>
+          <FS label="Category" value={editRec.category} onChange={e=>setEditRec(f=>({...f,category:e.target.value}))} options={["Rent","House Maintenance","Utilities","Subscriptions","Education","Health","Other"]}/>
+          <Btn onClick={saveEditRec} col="#e040fb" tc="#fff">Save Changes</Btn>
         </Modal>
       )}
 
@@ -2550,7 +2803,7 @@ function App(){
     prices:<PriceUpdate data={data} setData={setData} nav={nav}/>,
   };
 
-  const NAV=[{id:"dash",icon:"⊞",label:"Home"},{id:"cashflow",icon:"⇅",label:"Cash"},{id:"invest",icon:"◈",label:"Invest"},{id:"emi",icon:"◷",label:"EMI"},{id:"reports",icon:"⬡",label:"Reports"}];
+  const NAV=[{id:"dash",icon:"⊞",label:"Home"},{id:"cashflow",icon:"⇅",label:"Cash"},{id:"invest",icon:"◈",label:"Invest"},{id:"emi",icon:"◷",label:"Payables"},{id:"reports",icon:"⬡",label:"Reports"}];
 
   // ── Swipe navigation between the 5 main screens ───────────────────────────
   const mainOrder=["dash","cashflow","invest","emi","reports"];
