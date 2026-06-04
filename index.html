@@ -241,22 +241,24 @@ const INIT = {
 let _idSeq = 0;
 const uid = () => `${Date.now().toString(36)}${(_idSeq++).toString(36)}${Math.random().toString(36).slice(2,7)}`;
 // One-time cleanup: guarantee every item in every collection has a unique id (fixes legacy duplicate ids).
+// Deterministic: the same stored data always produces the same cleaned ids, so it's stable across reloads.
 const dedupeIds = (data) => {
   let changed=false;
-  const seen=new Set();
-  const fix=(arr)=>{
+  const fixArr=(arr)=>{
     if(!Array.isArray(arr)) return arr;
-    return arr.map(it=>{
+    const counts={};
+    return arr.map((it,idx)=>{
       if(!it||typeof it!=="object") return it;
-      let id=it.id;
-      if(id===undefined||id===null||seen.has(String(id))){ id=uid(); changed=true; }
-      seen.add(String(id));
-      return id===it.id?it:{...it,id};
+      const base = (it.id===undefined||it.id===null||it.id==="") ? ("item"+idx) : String(it.id);
+      counts[base]=(counts[base]||0)+1;
+      const newId = counts[base]===1 ? base : `${base}__${counts[base]}`;
+      if(newId!==String(it.id)){ changed=true; return {...it,id:newId}; }
+      return it;
     });
   };
   const out={...data};
   ["transactions","stocks","mfs","metalSchemes","loans","cards","recurring","bankBalances","physicalGold","physicalSilver"].forEach(k=>{
-    if(Array.isArray(out[k])) out[k]=fix(out[k]);
+    if(Array.isArray(out[k])) out[k]=fixArr(out[k]);
   });
   return changed?out:data;
 };
@@ -823,7 +825,7 @@ function CashFlow({data,setData}){
               const c=isIn?"#00f0dc":"#ff5370";
               const open=openTx===t.id;
               return(
-                <div key={t.id} className="fade-up" onClick={()=>setOpenTx(o=>o===t.id?null:t.id)} style={{background:"rgba(255,255,255,.03)",border:"1px solid "+(open?"rgba(0,240,220,.25)":"rgba(255,255,255,.06)"),borderRadius:13,padding:"11px 13px",marginBottom:7,animationDelay:`${i*.04}s`,cursor:"pointer"}}>
+                <div key={date+"#"+i} className="fade-up" onClick={()=>setOpenTx(o=>o===t.id?null:t.id)} style={{background:"rgba(255,255,255,.03)",border:"1px solid "+(open?"rgba(0,240,220,.25)":"rgba(255,255,255,.06)"),borderRadius:13,padding:"11px 13px",marginBottom:7,animationDelay:`${i*.04}s`,cursor:"pointer"}}>
                   <div style={{display:"flex",alignItems:"center",gap:11}}>
                     <div style={{width:36,height:36,borderRadius:10,background:`rgba(${isIn?"0,240,220":"255,83,112"},.1)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0}}>{isIn?"💰":"💸"}</div>
                     <div style={{flex:1,minWidth:0}}>
