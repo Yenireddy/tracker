@@ -1901,7 +1901,7 @@ function EMIDebt({data,setData}){
   const [openCard,setOpenCard]=useState(null);
   const tapToggle=(key)=>setOpenCard(c=>c===key?null:key);
   const [lF,setLF]=useState({type:"loan",label:"",lender:"",total:"",remaining:"",emi:"",dueDay:"",secured:true,color:"#00f0dc",last4:"",bank:"",outstanding:"",limit:"",dueDate:today(),recLabel:"",recAmount:"",recDueDay:"",recCat:"Rent"});
-  const [openPaySec,setOpenPaySec]=useState({secured:true,unsecured:true,recurring:true,cards:true});
+  const [openPaySec,setOpenPaySec]=useState({secured:false,unsecured:false,recurring:false,cards:false});
   const togSec=(k)=>setOpenPaySec(s=>({...s,[k]:!s[k]}));
   const totalDebt=loans.reduce((s,l)=>s+l.remaining,0)+cards.reduce((s,c)=>s+c.outstanding,0);
   const days=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()+i-1);return d;});
