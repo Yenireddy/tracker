@@ -550,15 +550,18 @@ function Dashboard({data,setData,nav}){
             <span style={{fontSize:14}}>📅</span>
           </div>
         </div>
-        <div onClick={()=>nav("profile")} style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,#00f0dc,#7c3aed)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,cursor:"pointer",border:"2.5px solid rgba(0,240,220,.3)",flexShrink:0}}>👤</div>
+        <div onClick={()=>nav("profile")} style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,#00f0dc,#7c3aed)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,cursor:"pointer",border:"2.5px solid rgba(0,240,220,.3)",flexShrink:0,overflow:"hidden"}}>{profile.avatar?<img src={profile.avatar} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:"👤"}</div>
       </div>
 
-      <div style={{margin:"16px 16px 0",background:"linear-gradient(135deg,#00f0dc,#00b8d9)",borderRadius:22,padding:"20px 22px",position:"relative",overflow:"hidden"}} className="glow-cyan">
+      <div onClick={()=>nav("reports")} style={{margin:"16px 16px 0",background:"linear-gradient(135deg,#00f0dc,#00b8d9)",borderRadius:22,padding:"20px 22px",position:"relative",overflow:"hidden",cursor:"pointer"}} className="glow-cyan">
         <div style={{position:"absolute",right:-24,top:-24,width:100,height:100,borderRadius:"50%",background:"rgba(255,255,255,.1)"}}/>
         <div style={{fontSize:11,color:"rgba(0,0,0,.5)",fontWeight:700,letterSpacing:".1em"}}>NET WORTH</div>
         <div className="mono" style={{fontSize:30,fontWeight:700,color:"#000d0c",margin:"4px 0"}}>{fmtK(netWorth)}</div>
-        <div style={{display:"inline-flex",background:"rgba(0,0,0,.12)",borderRadius:20,padding:"3px 10px"}}>
-          <span style={{fontSize:12,color:"rgba(0,0,0,.6)"}}>↗ +2.4% this month</span>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{display:"inline-flex",background:"rgba(0,0,0,.12)",borderRadius:20,padding:"3px 10px"}}>
+            <span style={{fontSize:12,color:"rgba(0,0,0,.6)"}}>↗ +2.4% this month</span>
+          </div>
+          <span style={{fontSize:12,color:"rgba(0,0,0,.55)",fontWeight:700}}>View report →</span>
         </div>
       </div>
 
@@ -570,26 +573,6 @@ function Dashboard({data,setData,nav}){
         <Card style={{padding:"14px 16px",textAlign:"right"}}>
           <div style={{fontSize:12,color:"rgba(255,255,255,.38)",marginBottom:4}}>↙ Expenses</div>
           <div className="mono" style={{fontSize:24,fontWeight:800,color:"#ff5370"}}>{fmtK(totalOut)}</div>
-        </Card>
-      </div>
-
-      <div style={{margin:"12px 16px 0"}}>
-        <Card>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <span style={{fontSize:15,fontWeight:700}}>Investments</span>
-            <button onClick={()=>nav("invest")} style={{background:"none",border:"none",color:"#00f0dc",fontSize:13,fontWeight:600}}>View →</button>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:16}}>
-            <Donut data={donut} size={108} stroke={16}/>
-            <div style={{flex:1}}>
-              {donut.map(d=>(
-                <div key={d.label} style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:7,height:7,borderRadius:"50%",background:d.color}}/><span style={{fontSize:11,color:"rgba(255,255,255,.5)"}}>{d.label}</span></div>
-                  <span style={{fontSize:11,color:"rgba(255,255,255,.38)"}}>{Math.round(d.value/(donut.reduce((s,x)=>s+x.value,0)||1)*100)}%</span>
-                </div>
-              ))}
-            </div>
-          </div>
         </Card>
       </div>
 
@@ -1972,11 +1955,6 @@ function EMIDebt({data,setData}){
   const totalDebt=loans.reduce((s,l)=>s+l.remaining,0)+cards.reduce((s,c)=>s+c.outstanding,0);
   const days=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()+i-1);return d;});
   const pending=pendingPayments(data,5);
-  function markPaid(p){
-    if(p.kind==="loan") setData(d=>({...d,loans:d.loans.map(l=>l.id===p.id?{...l,lastPaid:p.cycle}:l)}));
-    else if(p.kind==="recurring") setData(d=>({...d,recurring:d.recurring.map(r=>r.id===p.id?{...r,lastPaid:p.cycle}:r)}));
-    else if(p.kind==="card") setData(d=>({...d,cards:d.cards.map(c=>c.id===p.id?{...c,lastPaid:p.cycle}:c)}));
-  }
 
   function addDebt(){
     if(lF.type==="loan"){
@@ -2044,25 +2022,6 @@ function EMIDebt({data,setData}){
             </div>
           );
         })}
-      </div>
-
-      {/* Pending in next 5 days */}
-      <div style={{padding:"14px 16px 0"}}>
-        <div style={{fontSize:10,fontWeight:700,color:"rgba(255,83,112,.7)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:9}}>Due within 5 days</div>
-        {pending.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",marginBottom:6}}>Nothing due in the next 5 days. 🎉</div>}
-        {pending.map(p=>(
-          <div key={p.key} style={{background:"rgba(255,83,112,.06)",border:"1px solid rgba(255,83,112,.16)",borderRadius:14,padding:"12px 14px",marginBottom:8}}>
-            <div style={{display:"flex",alignItems:"center",gap:11}}>
-              <span style={{fontSize:18}}>{p.kind==="card"?"💳":p.kind==="recurring"?"🔁":"🏦"}</span>
-              <div style={{flex:1}}>
-                <div style={{fontSize:14,fontWeight:700}}>{p.label}</div>
-                <div style={{fontSize:10,color:p.days<0?"#ff5370":p.days<=2?"#ffd700":"rgba(255,255,255,.4)"}}>{dueLabel(p.days)} · {fmtDate(p.due)} · {p.sub}</div>
-              </div>
-              <div className="mono" style={{fontSize:15,fontWeight:700,color:p.color}}>{fmtK(p.amount)}</div>
-            </div>
-            <button onClick={()=>markPaid(p)} style={{width:"100%",marginTop:9,padding:"8px",borderRadius:9,background:"rgba(0,200,120,.12)",border:"1px solid rgba(0,200,120,.3)",color:"#00c878",fontSize:12,fontWeight:700}}>✓ Mark Paid</button>
-          </div>
-        ))}
       </div>
 
       <div style={{margin:"12px 16px 0",background:"rgba(255,83,112,.07)",border:"1px solid rgba(255,83,112,.14)",borderRadius:14,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2360,6 +2319,22 @@ function Reports({data}){
   ];
   const hasFilters=!!(search||dateFrom||dateTo);
 
+  // Liability breakdown for Wealth Snapshot
+  const securedDebt=loans.filter(l=>l.secured).reduce((s,l)=>s+l.remaining,0);
+  const unsecuredDebt=loans.filter(l=>!l.secured).reduce((s,l)=>s+l.remaining,0);
+  const cardDebt=cards.reduce((s,c)=>s+c.outstanding,0);
+
+  // Monthly expense series (last 6 months from the actual transactions)
+  const now=new Date();
+  const months6=Array.from({length:6},(_,i)=>{const d=new Date(now.getFullYear(),now.getMonth()-5+i,1);return d;});
+  const monthSpend=months6.map(d=>{
+    const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    return transactions.filter(t=>t.type==="expense"&&t.date.startsWith(key)).reduce((s,t)=>s+t.amount,0);
+  });
+  const monthLabels=months6.map(d=>["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()]);
+
+  const [openCat,setOpenCat]=useState(null); // expandable expense category
+
   return(
     <div className="slide-in" style={{paddingBottom:100}}>
       <div style={{padding:"22px 20px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2402,36 +2377,76 @@ function Reports({data}){
       {tab==="overview"&&(
         <div style={{padding:"12px 16px 0"}}>
           <Card style={{marginBottom:12}}>
-            <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:14}}>
               <div><div style={{fontSize:14,fontWeight:700}}>Spending Patterns</div><div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>Monthly expenses</div></div>
-              <div style={{width:30,height:30,borderRadius:8,background:"rgba(0,240,220,.1)",display:"flex",alignItems:"center",justifyContent:"center",color:"#00f0dc",fontSize:13}}>↗</div>
+              <div style={{width:30,height:30,borderRadius:8,background:"rgba(0,240,220,.1)",display:"flex",alignItems:"center",justifyContent:"center",color:"#00f0dc",fontSize:13}}>📊</div>
             </div>
-            <LineChart data={[18000,24000,19500,28000,24000,totalOut||12000]} labels={["Jan","Feb","Mar","Apr","May","Jun"]} color="#00f0dc" h={100}/>
-            <div style={{display:"flex",gap:22,marginTop:14}}>
-              {[["Avg Monthly",fmtK(Math.round([18000,24000,19500,28000,24000,totalOut||12000].reduce((s,v)=>s+v,0)/6)),"#fff"],["Highest",fmtK(Math.max(18000,24000,19500,28000,24000,totalOut||12000)),"#ff5370"]].map(([l,v,c])=>(
+            {(()=>{ const mx=Math.max(...monthSpend,1); return (
+              <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",height:120,gap:8}}>
+                {monthSpend.map((v,i)=>(
+                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
+                    <div className="mono" style={{fontSize:9,color:"rgba(255,255,255,.4)"}}>{v>=1000?`${Math.round(v/1000)}k`:v||""}</div>
+                    <div style={{width:"100%",height:Math.max(4,Math.round(v/mx*82)),background:v===mx&&v>0?"#ff5370":"#00f0dc",borderRadius:"5px 5px 2px 2px",transition:"height .3s"}}/>
+                    <div style={{fontSize:10,color:"rgba(255,255,255,.35)"}}>{monthLabels[i]}</div>
+                  </div>
+                ))}
+              </div>
+            );})()}
+            <div style={{display:"flex",gap:22,marginTop:16,borderTop:"1px solid rgba(255,255,255,.06)",paddingTop:12}}>
+              {[["Avg Monthly",fmtK(Math.round(monthSpend.reduce((s,v)=>s+v,0)/6)),"#fff"],["Highest",fmtK(Math.max(...monthSpend,0)),"#ff5370"]].map(([l,v,c])=>(
                 <div key={l}><div style={{fontSize:10,color:"rgba(255,255,255,.32)"}}>{l}</div><div className="mono" style={{fontSize:18,fontWeight:700,color:c}}>{v}</div></div>
               ))}
             </div>
           </Card>
           <Card style={{marginBottom:12}}>
-            <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>Asset Allocation</div>
-            <div style={{display:"flex",justifyContent:"center",margin:"6px 0 12px"}}><Donut data={donutAlloc} size={165} stroke={25}/></div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:"7px 16px",justifyContent:"center"}}>
-              {donutAlloc.map(d=>(
-                <div key={d.label} style={{display:"flex",alignItems:"center",gap:5}}>
-                  <div style={{width:7,height:7,borderRadius:"50%",background:d.color}}/><span style={{fontSize:11,color:"rgba(255,255,255,.42)"}}>{d.label} {Math.round(d.value/(totalAssets||1)*100)}%</span>
+            <div style={{fontSize:14,fontWeight:700,marginBottom:14}}>Asset Allocation</div>
+            {donutAlloc.map(d=>{
+              const pct=Math.round(d.value/(totalAssets||1)*100);
+              return(
+                <div key={d.label} style={{marginBottom:12}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <div style={{display:"flex",alignItems:"center",gap:7}}><div style={{width:9,height:9,borderRadius:"50%",background:d.color}}/><span style={{fontSize:12,color:"rgba(255,255,255,.62)"}}>{d.label}</span></div>
+                    <span className="mono" style={{fontSize:12,fontWeight:700,color:d.color}}>{fmtK(d.value)} · {pct}%</span>
+                  </div>
+                  <div style={{height:8,background:"rgba(255,255,255,.06)",borderRadius:5,overflow:"hidden"}}>
+                    <div style={{width:`${pct}%`,height:"100%",background:d.color,borderRadius:5,transition:"width .3s"}}/>
+                  </div>
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </Card>
           <Card>
-            <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>Wealth Snapshot</div>
-            {[["Total Assets",totalAssets,"#00f0dc"],["Total Liabilities",totalDebt,"#ff5370"],["Net Worth",totalAssets-totalDebt,"#ffd700"]].map(([l,v,c])=>(
-              <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,.05)"}}>
+            <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>Wealth Snapshot</div>
+
+            <div style={{fontSize:10,fontWeight:700,color:"rgba(0,240,220,.7)",letterSpacing:".07em",textTransform:"uppercase",marginBottom:6}}>Assets</div>
+            {[["Equity (Stocks)",stockVal],["Mutual Funds",mfVal],["Metals (Gold + Silver)",goldVal+silverVal],["Banks & Cash",bankTotal]].map(([l,v])=>(
+              <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"6px 0"}}>
                 <span style={{fontSize:12,color:"rgba(255,255,255,.5)"}}>{l}</span>
-                <span className="mono" style={{fontSize:14,fontWeight:700,color:c}}>{fmtK(v)}</span>
+                <span className="mono" style={{fontSize:13,color:"rgba(255,255,255,.85)"}}>{fmtK(v)}</span>
               </div>
             ))}
+            <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderTop:"1px solid rgba(255,255,255,.08)",marginTop:2}}>
+              <span style={{fontSize:12,fontWeight:700,color:"#00f0dc"}}>Total Assets</span>
+              <span className="mono" style={{fontSize:15,fontWeight:800,color:"#00f0dc"}}>{fmtK(totalAssets)}</span>
+            </div>
+
+            <div style={{fontSize:10,fontWeight:700,color:"rgba(255,83,112,.7)",letterSpacing:".07em",textTransform:"uppercase",margin:"12px 0 6px"}}>Liabilities</div>
+            {[["Secured Loans",securedDebt],["Unsecured Loans",unsecuredDebt],["Credit Card Outstanding",cardDebt]].map(([l,v])=>(
+              <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"6px 0"}}>
+                <span style={{fontSize:12,color:"rgba(255,255,255,.5)"}}>{l}</span>
+                <span className="mono" style={{fontSize:13,color:"rgba(255,255,255,.85)"}}>{fmtK(v)}</span>
+              </div>
+            ))}
+            <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderTop:"1px solid rgba(255,255,255,.08)",marginTop:2}}>
+              <span style={{fontSize:12,fontWeight:700,color:"#ff5370"}}>Total Liabilities</span>
+              <span className="mono" style={{fontSize:15,fontWeight:800,color:"#ff5370"}}>{fmtK(totalDebt)}</span>
+            </div>
+
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 12px",marginTop:12,background:"rgba(255,213,0,.06)",border:"1px solid rgba(255,213,0,.18)",borderRadius:12}}>
+              <div><div style={{fontSize:13,fontWeight:800,color:"#ffd700"}}>Net Worth</div><div style={{fontSize:9,color:"rgba(255,213,0,.55)"}}>Assets − Liabilities</div></div>
+              <span className="mono" style={{fontSize:18,fontWeight:800,color:"#ffd700"}}>{fmtK(totalAssets-totalDebt)}</span>
+            </div>
+
             <div style={{marginTop:10,background:"rgba(255,213,0,.05)",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:10,color:"rgba(255,213,0,.65)",marginBottom:3}}>💵 USD Income (T Gifts + C Gifts)</div>
               <div className="mono" style={{fontSize:13,fontWeight:700,color:"#ffd700"}}>{fmtK(filtered.filter(t=>USD_CATS.includes(t.cat)).reduce((s,t)=>s+t.amount,0))}</div>
@@ -2461,17 +2476,36 @@ function Reports({data}){
         <div style={{padding:"12px 16px 0"}}>
           <Card style={{marginBottom:12}}>
             <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>Expense Breakdown {hasFilters&&<span style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>· filtered</span>}</div>
-            {catSorted.length===0?<div style={{textAlign:"center",padding:"16px 0",color:"rgba(255,255,255,.22)",fontSize:13}}>No expenses in this range</div>:catSorted.map(([cat,amt])=>(
-              <div key={cat} style={{marginBottom:11}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                  <span style={{fontSize:12,color:"rgba(255,255,255,.62)"}}>{cat}</span>
-                  <span className="mono" style={{fontSize:12,color:"#ff5370"}}>{fmtK(amt)}</span>
+            {catSorted.length===0?<div style={{textAlign:"center",padding:"16px 0",color:"rgba(255,255,255,.22)",fontSize:13}}>No expenses in this range</div>:catSorted.map(([cat,amt])=>{
+              const open=openCat===cat;
+              const rows=filtered.filter(t=>t.type==="expense"&&t.cat===cat).sort((a,b)=>b.date.localeCompare(a.date));
+              return(
+                <div key={cat} style={{marginBottom:11}}>
+                  <div onClick={()=>setOpenCat(o=>o===cat?null:cat)} style={{cursor:"pointer"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                      <span style={{fontSize:12,color:"rgba(255,255,255,.62)"}}>{open?"▾ ":"▸ "}{cat}</span>
+                      <span className="mono" style={{fontSize:12,color:"#ff5370"}}>{fmtK(amt)}</span>
+                    </div>
+                    <div style={{height:4,background:"rgba(255,255,255,.06)",borderRadius:4,overflow:"hidden"}}>
+                      <div style={{width:`${Math.round(amt/totalSpend*100)}%`,height:"100%",background:"#ff5370",borderRadius:4,opacity:.7}}/>
+                    </div>
+                  </div>
+                  {open&&(
+                    <div style={{marginTop:8,marginLeft:6,paddingLeft:10,borderLeft:"2px solid rgba(255,83,112,.25)"}}>
+                      {rows.map((t,i)=>(
+                        <div key={t.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0"}}>
+                          <div style={{minWidth:0,flex:1}}>
+                            <div style={{fontSize:12,color:"rgba(255,255,255,.78)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.label}</div>
+                            <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{fmtDate(t.date)}{t.note?` · ${t.note}`:""}</div>
+                          </div>
+                          <span className="mono" style={{fontSize:12,color:"#ff5370",marginLeft:8,flexShrink:0}}>{fmtK(t.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div style={{height:4,background:"rgba(255,255,255,.06)",borderRadius:4,overflow:"hidden"}}>
-                  <div style={{width:`${Math.round(amt/totalSpend*100)}%`,height:"100%",background:"#ff5370",borderRadius:4,opacity:.7}}/>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </Card>
           <Card>
             <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>Income Sources</div>
@@ -2570,6 +2604,31 @@ function Profile({data,setData,nav}){
 
   function save(){ setData(d=>({...d,profile:pF})); setEditing(false); }
 
+  const fileRef=useRef(null);
+  function pickPhoto(){ if(fileRef.current) fileRef.current.click(); }
+  function onPhoto(e){
+    const file=e.target.files&&e.target.files[0];
+    if(!file) return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      const img=new Image();
+      img.onload=()=>{
+        // resize to max 220px, compress to keep cloud storage small
+        const max=220, scale=Math.min(1,max/Math.max(img.width,img.height));
+        const w=Math.round(img.width*scale), h=Math.round(img.height*scale);
+        const canvas=document.createElement("canvas"); canvas.width=w; canvas.height=h;
+        canvas.getContext("2d").drawImage(img,0,0,w,h);
+        const dataUrl=canvas.toDataURL("image/jpeg",0.82);
+        setData(d=>({...d,profile:{...d.profile,avatar:dataUrl}}));
+        setPF(f=>({...f,avatar:dataUrl}));
+      };
+      img.src=ev.target.result;
+    };
+    reader.readAsDataURL(file);
+    e.target.value="";
+  }
+  function removePhoto(){ setData(d=>({...d,profile:{...d.profile,avatar:""}})); setPF(f=>({...f,avatar:""})); }
+
   function exportCSV(){
     const rows=[
       ["Date","Type","Category","Label","Amount (₹)","USD Amount","Rate Used","Note"],
@@ -2614,9 +2673,12 @@ function Profile({data,setData,nav}){
       </div>
 
       <div style={{margin:"18px 16px 0",background:"rgba(255,255,255,.03)",border:"1px solid rgba(0,240,220,.12)",borderRadius:20,padding:"22px",textAlign:"center"}}>
-        <div style={{width:74,height:74,borderRadius:"50%",background:"linear-gradient(135deg,#00f0dc,#7c3aed)",margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,border:"3px solid rgba(0,240,220,.28)",position:"relative"}}>
-          👤<div style={{position:"absolute",bottom:2,right:2,width:12,height:12,borderRadius:"50%",background:"#00c878",border:"2px solid #0e1525"}}/>
+        <div onClick={pickPhoto} style={{width:74,height:74,borderRadius:"50%",background:profile.avatar?"#0e1525":"linear-gradient(135deg,#00f0dc,#7c3aed)",margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,border:"3px solid rgba(0,240,220,.28)",position:"relative",cursor:"pointer",overflow:"hidden"}}>
+          {profile.avatar?<img src={profile.avatar} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:"👤"}
+          <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,.55)",fontSize:9,color:"#fff",padding:"2px 0",fontWeight:600}}>📷 Edit</div>
         </div>
+        <input ref={fileRef} type="file" accept="image/*" onChange={onPhoto} style={{display:"none"}}/>
+        {profile.avatar&&<div style={{marginBottom:10}}><button onClick={removePhoto} style={{background:"none",border:"none",color:"rgba(255,83,112,.7)",fontSize:11,fontWeight:600}}>Remove photo</button></div>}
         {editing?(
           <>
             <input style={{...iS,textAlign:"center",marginBottom:8}} value={pF.name} onChange={e=>setPF(f=>({...f,name:e.target.value}))}/>
