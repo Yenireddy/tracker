@@ -317,7 +317,7 @@ const dedupeIds = (data) => {
 };
 
 const fmt  = (n) => `₹${Math.abs(n).toLocaleString("en-IN")}`;
-const fmtK = (n) => n>=10000000?`₹${(n/10000000).toFixed(2)}Cr`:n>=100000?`₹${(n/100000).toFixed(1)}L`:n>=1000?`₹${(n/1000).toFixed(1)}k`:`₹${Math.round(n)}`;
+const fmtK = (n) => `₹${Number(n||0).toLocaleString("en-IN",{maximumFractionDigits:2})}`;
 const today = () => new Date().toISOString().split("T")[0];
 const fmtDate = (d) => new Date(d).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"2-digit"});
 // Midnight today
