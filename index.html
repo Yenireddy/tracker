@@ -470,7 +470,7 @@ function TypeToggle({val,onChange}){
 // DASHBOARD
 // ══════════════════════════════════════════════════════════════════════════════
 function Dashboard({data,setData,nav}){
-  const {transactions,stocks,mfs,metalSchemes,loans,cards,bankBalances,profile,prices}=data;
+  const {transactions,stocks,mfs,metalSchemes,loans,cards,bankBalances,profile,prices,physicalGold,physicalSilver}=data;
   const [showAdd,setShowAdd]=useState(false);
   const [showBank,setShowBank]=useState(false);
   const [openSection,setOpenSection]=useState(null); // "payments" | "banks" — accordion, only one open
@@ -482,11 +482,13 @@ function Dashboard({data,setData,nav}){
   const stockVal=stocks.reduce((s,st)=>s+st.qty*st.currentPrice,0);
   const mfVal=mfs.reduce((s,m)=>s+mfUnits(m)*m.currentNAV,0);
   const goldG=metalSchemes.filter(s=>s.metal==="gold").reduce((s,sc)=>s+sc.installments.reduce((a,i)=>a+i.gramsAllotted,0),0);
+  const physGoldG=(physicalGold||[]).reduce((s,p)=>s+p.grams,0);
   const silverG=metalSchemes.filter(s=>s.metal==="silver").reduce((s,sc)=>s+sc.installments.reduce((a,i)=>a+i.gramsAllotted,0),0);
-  const goldVal=goldG*prices.gold22k, silverVal=silverG*prices.silver999;
+  const physSilverG=(physicalSilver||[]).reduce((s,p)=>s+p.grams,0);
+  const goldVal=(goldG+physGoldG)*prices.gold22k, silverVal=(silverG+physSilverG)*prices.silver999;
   const bankTotal=bankBalances.reduce((s,b)=>s+b.balance,0);
   const totalDebt=loans.reduce((s,l)=>s+l.remaining,0)+cards.reduce((s,c)=>s+c.outstanding,0);
-  const netWorth=stockVal+mfVal+goldVal+silverVal+bankTotal+(totalIn-totalOut)-totalDebt;
+  const netWorth=stockVal+mfVal+goldVal+silverVal+bankTotal-totalDebt;
   const pending=pendingPayments(data,5);
   function markPaid(p){
     if(p.kind==="loan") setData(d=>({...d,loans:d.loans.map(l=>l.id===p.id?{...l,lastPaid:p.cycle}:l)}));
@@ -2944,7 +2946,7 @@ function App(){
   return(
     <>
       <style>{G}</style>
-      <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{maxWidth:430,margin:"0 auto",minHeight:"100vh",background:"#080b12"}}>
+      <div style={{maxWidth:430,margin:"0 auto",minHeight:"100vh",background:"#080b12"}}>
         <ErrorBoundary>{SCREENS[screen]||SCREENS.dash}</ErrorBoundary>
 
         {/* Save status indicator */}
