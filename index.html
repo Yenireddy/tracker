@@ -948,6 +948,7 @@ function CashFlow({data,setData}){
             <FS label="Category" value={txF.cat} onChange={e=>setTxF(f=>({...f,cat:e.target.value}))} options={txF.type==="income"?INCOME_CATS:EXPENSE_CATS}/>
             <FI label="Date" type="date" value={txF.date} onChange={e=>setTxF(f=>({...f,date:e.target.value}))}/>
             <FI label="Description" value={txF.label} onChange={e=>setTxF(f=>({...f,label:e.target.value}))} placeholder="Description"/>
+            <FI label="Items / Note (optional)" value={txF.note||""} onChange={e=>setTxF(f=>({...f,note:e.target.value}))} placeholder="e.g. Milk, Onion, Ginger…"/>
             {isUSD?(
               <>
                 <div style={{background:"rgba(255,200,0,.07)",border:"1px solid rgba(255,200,0,.18)",borderRadius:10,padding:"9px 12px",marginBottom:10,fontSize:12,color:"rgba(255,213,0,.75)"}}>💱 Converts at ₹{data.usdRate}/$</div>
