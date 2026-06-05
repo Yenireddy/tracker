@@ -130,6 +130,59 @@ const guessCat = (mRaw) => {
 };
 
 // Parse a bank/credit-card SMS or email into {amount,date,merchant,type,cat,raw}
+// ── Grocery bill parser (BigBasket email paste) ─────────────────────────────
+const parseGroceryBill = (raw) => {
+  const text = raw || "";
+  const isBB = /bigbasket/i.test(text) || /Order\s*No:\s*BNN/i.test(text);
+  const isGenericBill = /item\s+details/i.test(text) && /sub\s+total/i.test(text) && /qty/i.test(text);
+  if (!isBB && !isGenericBill) return null;
+
+  // Grand total: scan from bottom for "Sub Total:  Rs. 217.23"
+  let total = 0;
+  const lines = text.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = lines[i].match(/sub\s*total\s*:\s*Rs\.?\s*([\d,]+(?:\.\d{1,2})?)/i);
+    if (m) { total = parseFloat(m[1].replace(/,/g,"")); break; }
+  }
+  if (!total) return null;
+
+  // Date: "Mon, 25 May 2026"
+  let date = today();
+  const mo2={jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12"};
+  const dm = text.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})/i);
+  if (dm) { const[,d,mo,y]=dm; date=`${y}-${mo2[mo.toLowerCase()]}-${d.padStart(2,"0")}`; }
+
+  // Extract item names from tab-separated or space-separated rows
+  const skip = /sub total|final total|item details|order no|delivery|address|phone numbers|qty\b|unit price|savings|chilled items|dry items|fruits.*veg|bakery|foodgrains|beverages|grocery|household|personal care|branded|imported|meat|dear |happy shopping|team big|order will|^sl\s*no|rs\.\s*\d.*rs\.\s*\d/i;
+  const items = [];
+  lines.forEach(raw => {
+    const line = raw.replace(/\u00a0/g," ");
+    if (!line.trim() || skip.test(line)) return;
+    // Tab path (Gmail preserves tabs)
+    if (line.includes("\t")) {
+      const parts = line.split("\t").map(s=>s.trim()).filter(Boolean);
+      // parts: ["1","Heritage Full Cream Milk 500 ml","2.0","Rs. 35.00","Rs. 70.00","Rs. 2.0"]
+      if (parts.length >= 3 && /^\d+$/.test(parts[0])) {
+        let name = parts[1];
+        if (name && !/^Rs\./i.test(name) && !/^\d+\.?\d*$/.test(name) && name.length > 2) {
+          name = name.replace(/^fresho!\s*/i,"").replace(/^bb\s+popular\s*/i,"").replace(/^bb\s+/i,"").trim();
+          if (name) items.push(name);
+        }
+        return;
+      }
+    }
+    // Fallback regex: "1 Heritage Milk 500ml 2.0 Rs. 35.00 Rs. 70.00..."
+    const m = line.match(/^\s*\d+\s+(.+?)\s+\d+\.\d+\s+Rs\.?\s*[\d.,]+/i);
+    if (m) {
+      let name = m[1].trim().replace(/^fresho!\s*/i,"").replace(/^bb\s+/i,"");
+      if (name.length > 2) items.push(name);
+    }
+  });
+
+  const note = items.join(", ");
+  return { amount:total, date, merchant:"BigBasket", type:"expense", cat:"Groceries", note, itemCount:items.length, ok:true };
+};
+
 const parseSMS = (text) => {
   const t=(text||"").replace(/\s+/g," ").trim();
   const low=t.toLowerCase();
@@ -710,9 +763,18 @@ function CashFlow({data,setData}){
     closeAdd();
   }
   function applySMS(){
-    const r=parseSMS(smsText);
-    if(!r.ok){ setSmsMsg("Couldn't find an amount. Paste the full message, or use Full entry."); return; }
-    setTxF(f=>({...f,type:r.type,cat:r.cat,date:r.date,amount:String(r.amount),amountUSD:"",label:r.merchant||""}));
+    // Try grocery bill first
+    const gb = parseGroceryBill(smsText);
+    if (gb && gb.ok) {
+      setTxF(f=>({...f, type:gb.type, cat:gb.cat, date:gb.date, amount:String(gb.amount), amountUSD:"", label:gb.merchant, note:gb.note||""}));
+      setAddMode("full");
+      setSmsMsg(`Found ₹${gb.amount} · BigBasket · ${gb.itemCount} item${gb.itemCount!==1?"s":""} — review & Save.`);
+      return;
+    }
+    // Fall back to bank SMS parser
+    const r = parseSMS(smsText);
+    if (!r.ok) { setSmsMsg("Couldn't find an amount. Paste the full message, or use Full entry."); return; }
+    setTxF(f=>({...f, type:r.type, cat:r.cat, date:r.date, amount:String(r.amount), amountUSD:"", label:r.merchant||""}));
     setAddMode("full");
     setSmsMsg(`Found ₹${r.amount}${r.merchant?` · ${r.merchant}`:""} — review & Save.`);
   }
