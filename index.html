@@ -191,27 +191,37 @@ const parseGroceryBill = (raw) => {
     return null;
   };
   const num = "(?:rs\\.?|₹|inr)?\\s*([\\d,]+(?:\\.\\d{1,2})?)";
+  // Tax invoices (Blinkit etc.) print the grand total right before "Amount in Words"
+  const wordsNum = amtFrom(new RegExp("([\\d,]+\\.\\d{2})\\s*amount\\s*in\\s*words","i"));
   const grand  = amtFrom(new RegExp("grand\\s*total\\s*:?\\s*"+num,"i"));
   const paid   = amtFrom(new RegExp("amount\\s*paid\\s*:?\\s*"+num,"i")) ?? amtFrom(new RegExp("(?:total\\s*)?(?:amount\\s*)?pay(?:able|ment)?\\s*:?\\s*"+num,"i"));
   const billT  = amtFrom(new RegExp("bill\\s*total\\s*:?\\s*"+num,"i"));
   const orderT = amtFrom(new RegExp("order\\s*total\\s*:?\\s*"+num,"i"));
   const netT   = amtFrom(new RegExp("net\\s*(?:payable|amount)\\s*:?\\s*"+num,"i"));
   const subT   = amtFrom(new RegExp("sub\\s*total\\s*:?\\s*"+num,"i"));
-  const plainT = amtFrom(new RegExp("(?:^|\\s)total\\s*:?\\s*"+num,"i"));
+  const plainT = amtFrom(new RegExp("(?:^|\\s)total\\s*:?\\s*(?:rs\\.?|₹|inr)?\\s*([\\d,]+\\.\\d{1,2})","i")); // require decimals to avoid grabbing a qty
   // priority order, first non-zero wins
-  let total = [grand,paid,billT,orderT,netT,subT,plainT].find(v=>v && v>0) || 0;
+  let total = [wordsNum,grand,paid,billT,orderT,netT,subT,plainT].find(v=>v && v>0) || 0;
   if (!total) return null;
 
-  // 3. Date
+  // 3. Date — prefer an explicit Invoice/Order date label; support "06-Jun-2026" and "26 May 2026"
   let date = today();
   const mo2={jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12"};
-  const dm = text.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})/i);
-  if (dm) { const[,d,mo,y]=dm; date=`${y}-${mo2[mo.toLowerCase()]}-${d.padStart(2,"0")}`; }
-  else { const dn=text.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/); if(dn){let[,d,mo,y]=dn; if(y.length===2)y="20"+y; date=`${y}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}`;} }
+  const MON="(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)";
+  const dateNear=(label)=>{
+    const m=text.match(new RegExp(label+"[^\\d]{0,15}(\\d{1,2})[\\s\\-\\/]+"+MON+"[a-z]*[\\s\\-\\/]+(\\d{4})","i"));
+    return m?`${m[3]}-${mo2[m[2].toLowerCase()]}-${m[1].padStart(2,"0")}`:null;
+  };
+  date = dateNear("invoice\\s*date") || dateNear("order\\s*date") || dateNear("bill\\s*date") || date;
+  if(date===today()){
+    const dm=text.match(new RegExp("(\\d{1,2})[\\s\\-\\/]+"+MON+"[a-z]*[\\s\\-\\/]+(\\d{4})","i"));
+    if(dm){ date=`${dm[3]}-${mo2[dm[2].toLowerCase()]}-${dm[1].padStart(2,"0")}`; }
+    else { const dn=text.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/); if(dn){let[,d,mo,y]=dn; if(y.length===2)y="20"+y; date=`${y}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}`;} }
+  }
 
   // 4. Item extraction - tab rows then regex fallback
-  const skip = /sub\s*total|grand\s*total|final\s*total|bill\s*total|order\s*total|amount\s*paid|amount\s*pay|net\s*payable|delivery|handling|packaging|gst|tax|discount|savings|coupon|item\s*details|item\s*name|order\s*no|order\s*id|invoice|address|phone|qty\b|unit\s*price|^\s*total\b|chilled items|dry items|fruits.*veg|bakery|foodgrains|beverages|household|personal care|branded|imported|meat|dear |happy shopping|team |order will|^sl\s*no|thank you/i;
-  const clean = (s) => s.replace(/^fresho!\s*/i,"").replace(/^bb\s+popular\s*/i,"").replace(/^bb\s+/i,"").trim();
+  const skip = /sub\s*total|grand\s*total|final\s*total|bill\s*total|order\s*total|item\s*bill|order\s*summary|order\s*items|amount\s*paid|amount\s*pay|net\s*payable|delivery|handling|packaging|partner\s*fee|platform\s*fee|gst|tax|discount|savings|coupon|item\s*details|item\s*name|order\s*no|order\s*id|invoice|address|phone|qty\b|unit\s*price|^\s*total\b|chilled items|dry items|fruits.*veg|bakery|foodgrains|beverages|household|personal care|branded|imported|meat|dear |greetings|happy shopping|team |order will|^sl\s*no|thank you/i;
+  const clean = (s) => s.replace(/^\d+\s*[xX×]\s*/,"").replace(/^fresho!\s*/i,"").replace(/^bb\s+popular\s*/i,"").replace(/^bb\s+/i,"").trim();
   const items = [];
   lines.forEach(rawLine => {
     const line = rawLine.replace(/\u00a0/g," ");
@@ -231,6 +241,12 @@ const parseGroceryBill = (raw) => {
     const m = line.match(/^\s*\d+[\s.]+(.+?)\s+\d+(?:\.\d+)?\s+(?:rs\.?|₹)\s*[\d.,]+/i);
     if (m) { const c=clean(m[1]); if(c.length>2) items.push(c); }
   });
+
+  // Tax-invoice items such as Blinkit: product name sits after a UPC and before the first bracket
+  if(items.length===0){
+    const hsnRe=/\d{4}\s+\d{4}\s+\d{4}\s+\d+\s+([A-Za-z][A-Za-z0-9 &',.\-]{3,70}?)\s*\x28/g;
+    let mm; while((mm=hsnRe.exec(text))!==null){ const c=clean(mm[1]); if(c.length>2 && !items.includes(c)) items.push(c); }
+  }
 
   const note = items.join(", ");
   return { amount:total, date, merchant:merchant||"Order", type:"expense", cat, note, itemCount:items.length, ok:true };
