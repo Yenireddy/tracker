@@ -92,6 +92,30 @@ async function saveToFirestore(data) {
   } catch(e) { console.error("Firestore save error:", e); }
 }
 
+// Each uploaded bill lives in its OWN document so the main state doc never bloats.
+const FB_BILL_URL = (id) => `https://firestore.googleapis.com/v1/projects/${FB_PROJECT}/databases/(default)/documents/users/default/bills/${id}`;
+async function saveBill(id, dataUrl) {
+  try {
+    const res = await fetch(`${FB_BILL_URL(id)}?key=${FB_API_KEY}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { data: { stringValue: dataUrl } } }),
+    });
+    return res.ok;
+  } catch(e) { console.error("Bill save error:", e); return false; }
+}
+async function loadBill(id) {
+  try {
+    const res = await fetch(`${FB_BILL_URL(id)}?key=${FB_API_KEY}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.fields && json.fields.data ? json.fields.data.stringValue : null;
+  } catch(e) { console.error("Bill load error:", e); return null; }
+}
+async function deleteBill(id) {
+  try { await fetch(`${FB_BILL_URL(id)}?key=${FB_API_KEY}`, { method: "DELETE" }); } catch(e) {}
+}
+
 
 const G = `
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
@@ -130,57 +154,86 @@ const guessCat = (mRaw) => {
 };
 
 // Parse a bank/credit-card SMS or email into {amount,date,merchant,type,cat,raw}
-// ── Grocery bill parser (BigBasket email paste) ─────────────────────────────
+// ── Order/grocery bill parser (multi-merchant email/invoice paste) ──────────
+const ORDER_MERCHANTS = [
+  {k:/blinkit/i,                       name:"Blinkit",            cat:"Groceries"},
+  {k:/instamart|swiggy\s*instamart/i,  name:"Swiggy Instamart",   cat:"Groceries"},
+  {k:/zepto/i,                         name:"Zepto",              cat:"Groceries"},
+  {k:/dunzo/i,                         name:"Dunzo",              cat:"Groceries"},
+  {k:/bigbasket|bbnow|\bBNN-/i,        name:"BigBasket",          cat:"Groceries"},
+  {k:/jiomart/i,                       name:"JioMart",            cat:"Groceries"},
+  {k:/dmart|d-?mart ready/i,           name:"DMart",              cat:"Groceries"},
+  {k:/flipkart/i,                      name:"Flipkart",           cat:"Shopping"},
+  {k:/amazon/i,                        name:"Amazon",             cat:"Shopping"},
+  {k:/swiggy/i,                        name:"Swiggy",             cat:"Online Food Order"},
+  {k:/zomato/i,                        name:"Zomato",             cat:"Online Food Order"},
+];
+
 const parseGroceryBill = (raw) => {
   const text = raw || "";
-  const isBB = /bigbasket/i.test(text) || /Order\s*No:\s*BNN/i.test(text);
-  const isGenericBill = /item\s+details/i.test(text) && /sub\s+total/i.test(text) && /qty/i.test(text);
-  if (!isBB && !isGenericBill) return null;
-
-  // Grand total: scan from bottom for "Sub Total:  Rs. 217.23"
-  let total = 0;
   const lines = text.split(/\r?\n/);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const m = lines[i].match(/sub\s*total\s*:\s*Rs\.?\s*([\d,]+(?:\.\d{1,2})?)/i);
-    if (m) { total = parseFloat(m[1].replace(/,/g,"")); break; }
-  }
+
+  // 1. Merchant detection
+  let merchant=null, cat="Groceries";
+  for (const m of ORDER_MERCHANTS){ if(m.k.test(text)){ merchant=m.name; cat=m.cat; break; } }
+  // Generic bill signal even if merchant unknown
+  const looksLikeBill = /item\s+details|item\s+name|order\s*(no|id|summary)|invoice|qty\b/i.test(text)
+    && /(grand|sub|bill|order|net)?\s*total|amount\s*pay|paid/i.test(text)
+    && /(rs\.?|₹|inr)\s*\d/i.test(text);
+  if (!merchant && !looksLikeBill) return null;
+
+  // 2. Total detection - prefer the real payable; skip zero values; fall back to sub total
+  const amtFrom = (re) => {
+    for (let i=lines.length-1;i>=0;i--){
+      const m=lines[i].match(re);
+      if(m){ const v=parseFloat(m[1].replace(/,/g,"")); if(!isNaN(v)) return v; }
+    }
+    return null;
+  };
+  const num = "(?:rs\\.?|₹|inr)?\\s*([\\d,]+(?:\\.\\d{1,2})?)";
+  const grand  = amtFrom(new RegExp("grand\\s*total\\s*:?\\s*"+num,"i"));
+  const paid   = amtFrom(new RegExp("amount\\s*paid\\s*:?\\s*"+num,"i")) ?? amtFrom(new RegExp("(?:total\\s*)?(?:amount\\s*)?pay(?:able|ment)?\\s*:?\\s*"+num,"i"));
+  const billT  = amtFrom(new RegExp("bill\\s*total\\s*:?\\s*"+num,"i"));
+  const orderT = amtFrom(new RegExp("order\\s*total\\s*:?\\s*"+num,"i"));
+  const netT   = amtFrom(new RegExp("net\\s*(?:payable|amount)\\s*:?\\s*"+num,"i"));
+  const subT   = amtFrom(new RegExp("sub\\s*total\\s*:?\\s*"+num,"i"));
+  const plainT = amtFrom(new RegExp("(?:^|\\s)total\\s*:?\\s*"+num,"i"));
+  // priority order, first non-zero wins
+  let total = [grand,paid,billT,orderT,netT,subT,plainT].find(v=>v && v>0) || 0;
   if (!total) return null;
 
-  // Date: "Mon, 25 May 2026"
+  // 3. Date
   let date = today();
   const mo2={jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12"};
   const dm = text.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})/i);
   if (dm) { const[,d,mo,y]=dm; date=`${y}-${mo2[mo.toLowerCase()]}-${d.padStart(2,"0")}`; }
+  else { const dn=text.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/); if(dn){let[,d,mo,y]=dn; if(y.length===2)y="20"+y; date=`${y}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}`;} }
 
-  // Extract item names from tab-separated or space-separated rows
-  const skip = /sub total|final total|item details|order no|delivery slot|address|phone numbers|qty\b|unit price|savings|chilled items|dry items|fruits.*veg|bakery|foodgrains|beverages|grocery|household|personal care|branded|imported|meat|dear |happy shopping|team big|order will|^sl\s*no/i;
+  // 4. Item extraction - tab rows then regex fallback
+  const skip = /sub\s*total|grand\s*total|final\s*total|bill\s*total|order\s*total|amount\s*paid|amount\s*pay|net\s*payable|delivery|handling|packaging|gst|tax|discount|savings|coupon|item\s*details|item\s*name|order\s*no|order\s*id|invoice|address|phone|qty\b|unit\s*price|^\s*total\b|chilled items|dry items|fruits.*veg|bakery|foodgrains|beverages|household|personal care|branded|imported|meat|dear |happy shopping|team |order will|^sl\s*no|thank you/i;
+  const clean = (s) => s.replace(/^fresho!\s*/i,"").replace(/^bb\s+popular\s*/i,"").replace(/^bb\s+/i,"").trim();
   const items = [];
-  lines.forEach(raw => {
-    const line = raw.replace(/\u00a0/g," ");
+  lines.forEach(rawLine => {
+    const line = rawLine.replace(/\u00a0/g," ");
     if (!line.trim() || skip.test(line)) return;
-    // Tab path (Gmail preserves tabs)
     if (line.includes("\t")) {
       const parts = line.split("\t").map(s=>s.trim()).filter(Boolean);
-      // parts: ["1","Heritage Full Cream Milk 500 ml","2.0","Rs. 35.00","Rs. 70.00","Rs. 2.0"]
       if (parts.length >= 3 && /^\d+$/.test(parts[0])) {
-        let name = parts[1];
-        if (name && !/^Rs\./i.test(name) && !/^\d+\.?\d*$/.test(name) && name.length > 2) {
-          name = name.replace(/^fresho!\s*/i,"").replace(/^bb\s+popular\s*/i,"").replace(/^bb\s+/i,"").trim();
-          if (name) items.push(name);
-        }
+        const name = parts[1];
+        if (name && !/^(rs\.?|₹)/i.test(name) && !/^\d+\.?\d*$/.test(name) && name.length > 2) { const c=clean(name); if(c) items.push(c); }
         return;
       }
+      // some bills: [name, qty, price] without sl no
+      if (parts.length >= 2 && !/^\d+$/.test(parts[0]) && /(rs\.?|₹)\s*[\d.]/i.test(line) && parts[0].length>2 && !/^(rs\.?|₹)/i.test(parts[0])) {
+        const c=clean(parts[0]); if(c) items.push(c); return;
+      }
     }
-    // Fallback regex: "1 Heritage Milk 500ml 2.0 Rs. 35.00 Rs. 70.00..."
-    const m = line.match(/^\s*\d+\s+(.+?)\s+\d+\.\d+\s+Rs\.?\s*[\d.,]+/i);
-    if (m) {
-      let name = m[1].trim().replace(/^fresho!\s*/i,"").replace(/^bb\s+/i,"");
-      if (name.length > 2) items.push(name);
-    }
+    const m = line.match(/^\s*\d+[\s.]+(.+?)\s+\d+(?:\.\d+)?\s+(?:rs\.?|₹)\s*[\d.,]+/i);
+    if (m) { const c=clean(m[1]); if(c.length>2) items.push(c); }
   });
 
   const note = items.join(", ");
-  return { amount:total, date, merchant:"BigBasket", type:"expense", cat:"Groceries", note, itemCount:items.length, ok:true };
+  return { amount:total, date, merchant:merchant||"Order", type:"expense", cat, note, itemCount:items.length, ok:true };
 };
 
 const parseSMS = (text) => {
@@ -286,6 +339,7 @@ const INIT = {
   loans:[],
   cards:[],
   recurring:[],
+  valuables:[],
   bankBalances:[],
   physicalGold:[],
   physicalSilver:[],
@@ -310,7 +364,7 @@ const dedupeIds = (data) => {
     });
   };
   const out={...data};
-  ["transactions","stocks","mfs","metalSchemes","loans","cards","recurring","bankBalances","physicalGold","physicalSilver"].forEach(k=>{
+  ["transactions","stocks","mfs","metalSchemes","loans","cards","recurring","valuables","bankBalances","physicalGold","physicalSilver"].forEach(k=>{
     if(Array.isArray(out[k])) out[k]=fixArr(out[k]);
   });
   return changed?out:data;
@@ -318,6 +372,43 @@ const dedupeIds = (data) => {
 
 const fmt  = (n) => `₹${Math.abs(n).toLocaleString("en-IN")}`;
 const fmtK = (n) => `₹${Number(n||0).toLocaleString("en-IN",{maximumFractionDigits:2})}`;
+
+// Process an uploaded bill: compress images, enforce ~1MB limit, return a data URL.
+const MAX_BILL_BYTES = 1024 * 1024; // 1 MB
+function processBillFile(file){
+  return new Promise((resolve, reject) => {
+    if(!file) return reject("No file selected.");
+    const isImg = /^image\//.test(file.type);
+    const isPdf = file.type === "application/pdf";
+    if(!isImg && !isPdf) return reject("Only an image or a PDF can be uploaded.");
+    if(isPdf){
+      if(file.size > MAX_BILL_BYTES) return reject("This PDF is larger than 1 MB. Please upload a smaller file or a photo of the bill.");
+      const r = new FileReader();
+      r.onload = e => resolve(e.target.result);
+      r.onerror = () => reject("Could not read the file.");
+      r.readAsDataURL(file);
+      return;
+    }
+    const r = new FileReader();
+    r.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const max = 1100, scale = Math.min(1, max/Math.max(img.width, img.height));
+        const w = Math.round(img.width*scale), h = Math.round(img.height*scale);
+        const c = document.createElement("canvas"); c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        let q = 0.7, url = c.toDataURL("image/jpeg", q);
+        while(url.length > MAX_BILL_BYTES*1.34 && q > 0.4){ q -= 0.1; url = c.toDataURL("image/jpeg", q); }
+        if(url.length > MAX_BILL_BYTES*1.34) return reject("Image is too large even after compression. Try a smaller photo.");
+        resolve(url);
+      };
+      img.onerror = () => reject("Could not read the image.");
+      img.src = e.target.result;
+    };
+    r.onerror = () => reject("Could not read the file.");
+    r.readAsDataURL(file);
+  });
+}
 const today = () => new Date().toISOString().split("T")[0];
 const fmtDate = (d) => new Date(d).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"2-digit"});
 // Midnight today
@@ -425,6 +516,50 @@ const iS={width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba
 const FI=({label,...p})=>(<div><div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginBottom:3,fontWeight:600,letterSpacing:".07em",textTransform:"uppercase"}}>{label}</div><input style={iS} {...p}/></div>);
 const FS=({label,options,...p})=>(<div><div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginBottom:3,fontWeight:600,letterSpacing:".07em",textTransform:"uppercase"}}>{label}</div><select style={{...iS,appearance:"none"}} {...p}>{options.map(o=><option key={typeof o==="string"?o:o.v} value={typeof o==="string"?o:o.v}>{typeof o==="string"?o:o.l}</option>)}</select></div>);
 const Btn=({children,col="#00f0dc",tc="#000",...p})=>(<button style={{width:"100%",padding:"13px",background:`linear-gradient(135deg,${col},${col}cc)`,border:"none",borderRadius:13,fontSize:15,fontWeight:700,color:tc,marginTop:6}} {...p}>{children}</button>);
+
+// Reusable bill upload / view / remove field. Stores each bill as its own cloud document.
+function BillField({billId,onUploaded,onRemoved}){
+  const ref=useRef(null);
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState("");
+  async function pick(e){
+    const f=e.target.files&&e.target.files[0]; e.target.value="";
+    if(!f) return;
+    setErr(""); setBusy(true);
+    try{
+      const url=await processBillFile(f);
+      const id=billId||uid();
+      const ok=await saveBill(id,url);
+      if(!ok) throw "Upload failed — please check your connection.";
+      onUploaded(id);
+    }catch(msg){ setErr(typeof msg==="string"?msg:"Upload failed."); }
+    setBusy(false);
+  }
+  async function view(){
+    if(!billId) return;
+    setBusy(true);
+    const url=await loadBill(billId);
+    setBusy(false);
+    if(url){ const w=window.open(); if(w){ w.document.write(`<iframe src="${url}" style="border:0;position:fixed;inset:0;width:100%;height:100%"></iframe>`); } }
+    else setErr("Could not load the bill.");
+  }
+  function remove(){ if(billId) deleteBill(billId); onRemoved(); }
+  return (
+    <div style={{marginBottom:10}}>
+      <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginBottom:3,fontWeight:600,letterSpacing:".07em",textTransform:"uppercase"}}>Bill Copy (optional)</div>
+      <input ref={ref} type="file" accept="image/*,application/pdf" onChange={pick} style={{display:"none"}}/>
+      {billId?(
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={view} disabled={busy} style={{flex:1,padding:"10px",borderRadius:9,background:"rgba(0,240,220,.1)",border:"1px solid rgba(0,240,220,.25)",color:"#00f0dc",fontSize:12,fontWeight:700}}>{busy?"…":"📄 View Bill"}</button>
+          <button onClick={remove} style={{flex:1,padding:"10px",borderRadius:9,background:"rgba(255,83,112,.1)",border:"1px solid rgba(255,83,112,.25)",color:"#ff5370",fontSize:12,fontWeight:700}}>Remove</button>
+        </div>
+      ):(
+        <button onClick={()=>ref.current&&ref.current.click()} disabled={busy} style={{width:"100%",padding:"11px",borderRadius:9,background:"rgba(255,255,255,.05)",border:"1px dashed rgba(255,255,255,.2)",color:"rgba(255,255,255,.6)",fontSize:12,fontWeight:600}}>{busy?"Uploading…":"⬆ Upload Bill (image / PDF, ≤ 1 MB)"}</button>
+      )}
+      {err&&<div style={{fontSize:10,color:"#ff5370",marginTop:5}}>{err}</div>}
+    </div>
+  );
+}
 const Card=({children,style={}})=>(<div style={{background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.07)",borderRadius:18,padding:"16px",...style}}>{children}</div>);
 
 // ── Shared action bar that appears on each card ────────────────────────────
@@ -470,7 +605,7 @@ function TypeToggle({val,onChange}){
 // DASHBOARD
 // ══════════════════════════════════════════════════════════════════════════════
 function Dashboard({data,setData,nav}){
-  const {transactions,stocks,mfs,metalSchemes,loans,cards,bankBalances,profile,prices,physicalGold,physicalSilver}=data;
+  const {transactions,stocks,mfs,metalSchemes,loans,cards,bankBalances,profile,prices,physicalGold,physicalSilver,valuables}=data;
   const [showAdd,setShowAdd]=useState(false);
   const [showBank,setShowBank]=useState(false);
   const [openSection,setOpenSection]=useState(null); // "payments" | "banks" — accordion, only one open
@@ -487,8 +622,9 @@ function Dashboard({data,setData,nav}){
   const physSilverG=(physicalSilver||[]).reduce((s,p)=>s+p.grams,0);
   const goldVal=(goldG+physGoldG)*prices.gold22k, silverVal=(silverG+physSilverG)*prices.silver999;
   const bankTotal=bankBalances.reduce((s,b)=>s+b.balance,0);
+  const valuablesVal=(valuables||[]).reduce((s,v)=>s+(Number(v.value)||0),0);
   const totalDebt=loans.reduce((s,l)=>s+l.remaining,0)+cards.reduce((s,c)=>s+c.outstanding,0);
-  const netWorth=stockVal+mfVal+goldVal+silverVal+bankTotal-totalDebt;
+  const netWorth=stockVal+mfVal+goldVal+silverVal+bankTotal+valuablesVal-totalDebt;
   const pending=pendingPayments(data,5);
   function markPaid(p){
     if(p.kind==="loan") setData(d=>({...d,loans:d.loans.map(l=>l.id===p.id?{...l,lastPaid:p.cycle}:l)}));
@@ -754,7 +890,7 @@ function CashFlow({data,setData}){
     if (gb && gb.ok) {
       setTxF(f=>({...f, type:gb.type, cat:gb.cat, date:gb.date, amount:String(gb.amount), amountUSD:"", label:gb.merchant, note:gb.note||""}));
       setAddMode("full");
-      setSmsMsg(`Found ₹${gb.amount} · BigBasket · ${gb.itemCount} item${gb.itemCount!==1?"s":""} — review & Save.`);
+      setSmsMsg(`Found ₹${gb.amount} · ${gb.merchant} · ${gb.itemCount} item${gb.itemCount!==1?"s":""} — review & Save.`);
       return;
     }
     // Fall back to bank SMS parser
@@ -976,8 +1112,11 @@ function CashFlow({data,setData}){
 // INVESTMENTS
 // ══════════════════════════════════════════════════════════════════════════════
 function Investments({data,setData}){
-  const {stocks,mfs,metalSchemes,physicalGold,physicalSilver,prices}=data;
+  const {stocks,mfs,metalSchemes,physicalGold,physicalSilver,prices,valuables=[]}=data;
   const [tab,setTab]=useState("stocks");
+  const [showVal,setShowVal]=useState(false);
+  const [editVal,setEditVal]=useState(null);
+  const [valF,setValF]=useState({name:"",category:"Electronics",value:"",date:today(),billId:""});
   const [showAdd,setShowAdd]=useState(false);
   const [showScheme,setShowScheme]=useState(null);
   const [showNav,setShowNav]=useState(false);
@@ -987,7 +1126,7 @@ function Investments({data,setData}){
   const [importRows,setImportRows]=useState([]);
   const [importError,setImportError]=useState("");
   const [manualRows,setManualRows]=useState([{symbol:"",name:"",qty:"",avgPrice:"",sector:"Other"}]);
-  const [aF,setAF]=useState({sub:"stocks",symbol:"",name:"",qty:"",avgPrice:"",currentPrice:"",sector:"Tech",mfName:"",invested:"",nav:"",units:"",mfCat:"Equity",sLabel:"",metal:"gold",purity:"22K",sMonthly:"",pmMetal:"gold",pmDate:today(),pmItem:"",pmVendor:"",pmPurity:"22K",pmGrams:"",pmValue:""});
+  const [aF,setAF]=useState({sub:"stocks",symbol:"",name:"",qty:"",avgPrice:"",currentPrice:"",sector:"Tech",mfName:"",invested:"",nav:"",units:"",mfCat:"Equity",sLabel:"",metal:"gold",purity:"22K",sMonthly:"",pmMetal:"gold",pmDate:today(),pmItem:"",pmVendor:"",pmPurity:"22K",pmGrams:"",pmValue:"",pmBillId:""});
   const [instF,setInstF]=useState({month:today().slice(0,7),amountPaid:"",gramsAllotted:""});
   const [showSip,setShowSip]=useState(null); // fund id for monthly SIP entry
   const [sipF,setSipF]=useState({month:today().slice(0,7),amount:"",nav:""});
@@ -1037,12 +1176,12 @@ function Investments({data,setData}){
   }
   function addPhysicalGold(){
     if(!aF.pmItem||!aF.pmGrams||!aF.pmValue) return;
-    setData(d=>({...d,physicalGold:[...(d.physicalGold||[]),{id:uid(),date:aF.pmDate,item:aF.pmItem,vendor:aF.pmVendor,purity:aF.pmPurity,grams:Number(aF.pmGrams),purchaseValue:Number(aF.pmValue)}]}));
+    setData(d=>({...d,physicalGold:[...(d.physicalGold||[]),{id:uid(),date:aF.pmDate,item:aF.pmItem,vendor:aF.pmVendor,purity:aF.pmPurity,grams:Number(aF.pmGrams),purchaseValue:Number(aF.pmValue),billId:aF.pmBillId||""}]}));
     setShowAdd(false);
   }
   function addPhysicalSilver(){
     if(!aF.pmItem||!aF.pmGrams||!aF.pmValue) return;
-    setData(d=>({...d,physicalSilver:[...(d.physicalSilver||[]),{id:uid(),date:aF.pmDate,item:aF.pmItem,vendor:aF.pmVendor,purity:aF.pmPurity,grams:Number(aF.pmGrams),purchaseValue:Number(aF.pmValue)}]}));
+    setData(d=>({...d,physicalSilver:[...(d.physicalSilver||[]),{id:uid(),date:aF.pmDate,item:aF.pmItem,vendor:aF.pmVendor,purity:aF.pmPurity,grams:Number(aF.pmGrams),purchaseValue:Number(aF.pmValue),billId:aF.pmBillId||""}]}));
     setShowAdd(false);
   }
   function addInstallment(sid){
@@ -1099,7 +1238,20 @@ function Investments({data,setData}){
     else if(type==="physGold") setData(d=>({...d,physicalGold:(d.physicalGold||[]).filter(p=>p.id!==id)}));
     else if(type==="physSilver") setData(d=>({...d,physicalSilver:(d.physicalSilver||[]).filter(p=>p.id!==id)}));
     else if(type==="scheme") setData(d=>({...d,metalSchemes:d.metalSchemes.filter(s=>s.id!==id)}));
+    else if(type==="valuable"){ const v=(data.valuables||[]).find(x=>x.id===id); if(v&&v.billId) deleteBill(v.billId); setData(d=>({...d,valuables:(d.valuables||[]).filter(x=>x.id!==id)})); }
     setConfirmDel(null);
+  }
+
+  function addValuable(){
+    if(!valF.name||!valF.value) return;
+    setData(d=>({...d,valuables:[...(d.valuables||[]),{id:uid(),name:valF.name,category:valF.category,value:Number(valF.value)||0,date:valF.date,billId:valF.billId||""}]}));
+    setShowVal(false);
+    setValF({name:"",category:"Electronics",value:"",date:today(),billId:""});
+  }
+  function saveEditVal(){
+    if(!editVal.name) return;
+    setData(d=>({...d,valuables:d.valuables.map(v=>v.id===editVal.id?{...v,name:editVal.name,category:editVal.category,value:Number(editVal.value)||0,date:editVal.date,billId:editVal.billId||""}:v)}));
+    setEditVal(null);
   }
 
   // ── CSV / text parser ─────────────────────────────────────────────────────
@@ -1322,8 +1474,8 @@ function Investments({data,setData}){
         </div>
 
         <div style={{display:"flex",gap:7,padding:"12px 16px 0"}}>
-          {[["stocks","📈 Stocks"],["mf","🏦 Funds"],["metals","🥇 Metals"]].map(([id,lbl])=>(
-            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"8px 4px",borderRadius:11,border:"none",background:tab===id?"rgba(0,240,220,.12)":"rgba(255,255,255,.05)",color:tab===id?"#00f0dc":"rgba(255,255,255,.38)",fontSize:12,fontWeight:700,borderBottom:tab===id?"2px solid #00f0dc":"2px solid transparent"}}>{lbl}</button>
+          {[["stocks","📈 Stocks"],["mf","🏦 Funds"],["metals","🥇 Metals"],["valuables","💎 Assets"]].map(([id,lbl])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"8px 4px",borderRadius:11,border:"none",background:tab===id?"rgba(0,240,220,.12)":"rgba(255,255,255,.05)",color:tab===id?"#00f0dc":"rgba(255,255,255,.38)",fontSize:11,fontWeight:700,borderBottom:tab===id?"2px solid #00f0dc":"2px solid transparent"}}>{lbl}</button>
           ))}
         </div>
       </div>
@@ -1447,7 +1599,68 @@ function Investments({data,setData}){
             {silverSchemes.map(sc=>schemeCard(sc))}
           </>
         )}
+
+        {tab==="valuables"&&(
+          <>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div><div style={{fontSize:13,fontWeight:700}}>Valuables & Assets</div><div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>Gadgets, appliances, vehicles…</div></div>
+              <button onClick={()=>{setValF({name:"",category:"Electronics",value:"",date:today(),billId:""});setShowVal(true);}} style={{padding:"7px 13px",borderRadius:10,background:"rgba(255,159,67,.14)",border:"1px solid rgba(255,159,67,.3)",color:"#ff9f43",fontSize:12,fontWeight:700}}>+ Add</button>
+            </div>
+            <div style={{background:"rgba(255,159,67,.06)",border:"1px solid rgba(255,159,67,.16)",borderRadius:13,padding:"12px 14px",marginBottom:12,display:"flex",justifyContent:"space-between"}}>
+              <span style={{fontSize:12,color:"rgba(255,159,67,.85)",fontWeight:600}}>Total Value</span>
+              <span className="mono" style={{fontSize:15,fontWeight:800,color:"#ff9f43"}}>{fmtK((valuables||[]).reduce((s,v)=>s+(Number(v.value)||0),0))}</span>
+            </div>
+            {(valuables||[]).length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:"4px 2px"}}>None yet. Tap + Add to record an iPhone, fridge, TV, etc. and attach its bill.</div>}
+            {(valuables||[]).map(v=>{
+              const open=openCard===("val-"+v.id);
+              const ico={Electronics:"📱",Appliance:"🧊",Vehicle:"🚗",Jewellery:"💍",Furniture:"🛋️",Other:"📦"}[v.category]||"📦";
+              return(
+                <div key={v.id} className="fade-up" onClick={()=>tapToggle("val-"+v.id)} style={{background:"rgba(255,255,255,.03)",border:"1px solid "+(open?"rgba(255,159,67,.3)":"rgba(255,255,255,.07)"),borderRadius:15,padding:"13px",marginBottom:10,cursor:"pointer"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:11}}>
+                    <div style={{width:38,height:38,borderRadius:11,background:"rgba(255,159,67,.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17}}>{ico}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:14,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.name}</div>
+                      <div style={{fontSize:10,color:"rgba(255,255,255,.32)"}}>{v.category} · {fmtDate(v.date)}{v.billId?" · 📄 Bill":""}</div>
+                    </div>
+                    <div className="mono" style={{fontSize:15,fontWeight:700,color:"#ff9f43"}}>{fmtK(v.value)}</div>
+                  </div>
+                  {open&&(
+                    <div onClick={e=>e.stopPropagation()}>
+                      <ActionBar onEdit={()=>setEditVal({...v,value:String(v.value)})} onDelete={()=>setConfirmDel({type:"valuable",id:v.id,label:v.name,amount:v.value})}/>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
       </div>
+
+      {showVal&&(
+        <Modal title="💎 Add Valuable / Asset" onClose={()=>setShowVal(false)}>
+          <FI label="Item Name" value={valF.name} onChange={e=>setValF(f=>({...f,name:e.target.value}))} placeholder="iPhone 16 Pro / LG Fridge"/>
+          <FS label="Category" value={valF.category} onChange={e=>setValF(f=>({...f,category:e.target.value}))} options={["Electronics","Appliance","Vehicle","Jewellery","Furniture","Other"]}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <FI label="Value (₹)" type="number" value={valF.value} onChange={e=>setValF(f=>({...f,value:e.target.value}))} placeholder="120000"/>
+            <FI label="Purchase Date" type="date" value={valF.date} onChange={e=>setValF(f=>({...f,date:e.target.value}))}/>
+          </div>
+          <BillField billId={valF.billId} onUploaded={id=>setValF(f=>({...f,billId:id}))} onRemoved={()=>setValF(f=>({...f,billId:""}))}/>
+          <Btn onClick={addValuable} col="#ff9f43" tc="#000">Add Asset</Btn>
+        </Modal>
+      )}
+
+      {editVal&&(
+        <Modal title="✏ Edit Valuable" onClose={()=>setEditVal(null)}>
+          <FI label="Item Name" value={editVal.name} onChange={e=>setEditVal(f=>({...f,name:e.target.value}))}/>
+          <FS label="Category" value={editVal.category} onChange={e=>setEditVal(f=>({...f,category:e.target.value}))} options={["Electronics","Appliance","Vehicle","Jewellery","Furniture","Other"]}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <FI label="Value (₹)" type="number" value={editVal.value} onChange={e=>setEditVal(f=>({...f,value:e.target.value}))}/>
+            <FI label="Purchase Date" type="date" value={editVal.date} onChange={e=>setEditVal(f=>({...f,date:e.target.value}))}/>
+          </div>
+          <BillField billId={editVal.billId} onUploaded={id=>setEditVal(f=>({...f,billId:id}))} onRemoved={()=>setEditVal(f=>({...f,billId:""}))}/>
+          <Btn onClick={saveEditVal} col="#ff9f43" tc="#000">Save Changes</Btn>
+        </Modal>
+      )}
 
       {showAdd&&(
         <Modal title="Add Investment" onClose={()=>setShowAdd(false)}>
@@ -1528,6 +1741,7 @@ function Investments({data,setData}){
                   </div>
                 );
               })()}
+              <BillField billId={aF.pmBillId} onUploaded={id=>setAF(f=>({...f,pmBillId:id}))} onRemoved={()=>setAF(f=>({...f,pmBillId:""}))}/>
               <Btn onClick={aF.pmMetal==="gold"?addPhysicalGold:addPhysicalSilver} col={aF.pmMetal==="gold"?"#ffd700":"#c0c0c0"} tc="#000">Save Physical {aF.pmMetal==="gold"?"Gold":"Silver"} Entry</Btn>
             </>)}
           </>)}
@@ -1913,6 +2127,7 @@ function Investments({data,setData}){
             <FI label="Weight (grams)" type="number" step="0.001" value={editPhysGold.grams} onChange={e=>setEditPhysGold(f=>({...f,grams:e.target.value}))}/>
           </div>
           <FI label="Purchase Value (₹)" type="number" value={editPhysGold.purchaseValue} onChange={e=>setEditPhysGold(f=>({...f,purchaseValue:e.target.value}))}/>
+          <BillField billId={editPhysGold.billId} onUploaded={id=>setEditPhysGold(f=>({...f,billId:id}))} onRemoved={()=>setEditPhysGold(f=>({...f,billId:""}))}/>
           <Btn onClick={saveEditPhysGold} col="#ffd700">Save Changes</Btn>
         </Modal>
       )}
@@ -1928,6 +2143,7 @@ function Investments({data,setData}){
             <FI label="Weight (grams)" type="number" step="0.001" value={editPhysSilver.grams} onChange={e=>setEditPhysSilver(f=>({...f,grams:e.target.value}))}/>
           </div>
           <FI label="Purchase Value (₹)" type="number" value={editPhysSilver.purchaseValue} onChange={e=>setEditPhysSilver(f=>({...f,purchaseValue:e.target.value}))}/>
+          <BillField billId={editPhysSilver.billId} onUploaded={id=>setEditPhysSilver(f=>({...f,billId:id}))} onRemoved={()=>setEditPhysSilver(f=>({...f,billId:""}))}/>
           <Btn onClick={saveEditPhysSilver} col="#c0c0c0">Save Changes</Btn>
         </Modal>
       )}
@@ -2274,7 +2490,7 @@ function EMIDebt({data,setData}){
 // REPORTS
 // ══════════════════════════════════════════════════════════════════════════════
 function Reports({data}){
-  const {transactions,stocks,mfs,metalSchemes,physicalGold,physicalSilver,bankBalances,loans,cards,prices}=data;
+  const {transactions,stocks,mfs,metalSchemes,physicalGold,physicalSilver,bankBalances,loans,cards,prices,valuables}=data;
   const [tab,setTab]=useState("overview");
   const [search,setSearch]=useState("");
   const [dateFrom,setDateFrom]=useState("");
@@ -2298,7 +2514,8 @@ function Reports({data}){
   const goldVal=(goldG+physGoldG)*prices.gold22k;
   const silverVal=(silverG+physSilverG)*prices.silver999;
   const bankTotal=bankBalances.reduce((s,b)=>s+b.balance,0);
-  const totalAssets=stockVal+mfVal+goldVal+silverVal+bankTotal;
+  const valuablesVal=(valuables||[]).reduce((s,v)=>s+(Number(v.value)||0),0);
+  const totalAssets=stockVal+mfVal+goldVal+silverVal+bankTotal+valuablesVal;
   const totalDebt=loans.reduce((s,l)=>s+l.remaining,0)+cards.reduce((s,c)=>s+c.outstanding,0);
 
   const catSpend={};
@@ -2316,6 +2533,7 @@ function Reports({data}){
     {value:goldVal,color:"#ffd700",label:"Gold"},
     {value:silverVal,color:"#c0c0c0",label:"Silver"},
     {value:bankTotal,color:"#4fc3f7",label:"Cash"},
+    {value:valuablesVal,color:"#ff9f43",label:"Valuables"},
   ];
   const hasFilters=!!(search||dateFrom||dateTo);
 
@@ -2419,7 +2637,7 @@ function Reports({data}){
             <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>Wealth Snapshot</div>
 
             <div style={{fontSize:10,fontWeight:700,color:"rgba(0,240,220,.7)",letterSpacing:".07em",textTransform:"uppercase",marginBottom:6}}>Assets</div>
-            {[["Equity (Stocks)",stockVal],["Mutual Funds",mfVal],["Metals (Gold + Silver)",goldVal+silverVal],["Banks & Cash",bankTotal]].map(([l,v])=>(
+            {[["Equity (Stocks)",stockVal],["Mutual Funds",mfVal],["Metals (Gold + Silver)",goldVal+silverVal],["Banks & Cash",bankTotal],["Valuables (Gadgets etc.)",valuablesVal]].map(([l,v])=>(
               <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"6px 0"}}>
                 <span style={{fontSize:12,color:"rgba(255,255,255,.5)"}}>{l}</span>
                 <span className="mono" style={{fontSize:13,color:"rgba(255,255,255,.85)"}}>{fmtK(v)}</span>
