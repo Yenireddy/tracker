@@ -169,6 +169,22 @@ const ORDER_MERCHANTS = [
   {k:/zomato/i,                        name:"Zomato",             cat:"Online Food Order"},
 ];
 
+// Convert an English amount phrase to a number, e.g. "One Hundred And Eighty-Two" -> 182
+const wordsToNum = (str) => {
+  const W={zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
+  const SCALE={hundred:100,thousand:1000,lakh:100000,lakhs:100000,crore:10000000,crores:10000000};
+  const toks=(str||"").toLowerCase().replace(/-/g," ").split(/[\s,]+/).filter(Boolean);
+  let total=0,cur=0,found=false;
+  for(const t of toks){
+    if(t==="and") continue;
+    if(t in W){ cur+=W[t]; found=true; }
+    else if(t==="hundred"){ cur=(cur||1)*100; found=true; }
+    else if(t in SCALE){ total+=(cur||1)*SCALE[t]; cur=0; found=true; }
+    else if(found) break;
+  }
+  return found ? total+cur : 0;
+};
+
 const parseGroceryBill = (raw) => {
   const text = raw || "";
   const lines = text.split(/\r?\n/);
@@ -191,8 +207,15 @@ const parseGroceryBill = (raw) => {
     return null;
   };
   const num = "(?:rs\\.?|₹|inr)?\\s*([\\d,]+(?:\\.\\d{1,2})?)";
-  // Tax invoices (Blinkit etc.) print the grand total right before "Amount in Words"
-  const wordsNum = amtFrom(new RegExp("([\\d,]+\\.\\d{2})\\s*amount\\s*in\\s*words","i"));
+  // Tax invoices (Blinkit etc.) state the total in words; parse that first (layout-independent).
+  let wordsAmount=0, lastBeforeWords=0;
+  const wIdx=text.search(/amount\s*in\s*words/i);
+  if(wIdx>=0){
+    const wm=text.slice(wIdx).match(/amount\s*in\s*words\s*:?\s*([a-z\s,\-&]+?)\s*rupees/i);
+    if(wm) wordsAmount=wordsToNum(wm[1]);
+    const before=text.slice(0,wIdx).match(/[\d,]+\.\d{2}/g);
+    if(before) lastBeforeWords=parseFloat(before[before.length-1].replace(/,/g,""));
+  }
   const grand  = amtFrom(new RegExp("grand\\s*total\\s*:?\\s*"+num,"i"));
   const paid   = amtFrom(new RegExp("amount\\s*paid\\s*:?\\s*"+num,"i")) ?? amtFrom(new RegExp("(?:total\\s*)?(?:amount\\s*)?pay(?:able|ment)?\\s*:?\\s*"+num,"i"));
   const billT  = amtFrom(new RegExp("bill\\s*total\\s*:?\\s*"+num,"i"));
@@ -201,7 +224,7 @@ const parseGroceryBill = (raw) => {
   const subT   = amtFrom(new RegExp("sub\\s*total\\s*:?\\s*"+num,"i"));
   const plainT = amtFrom(new RegExp("(?:^|\\s)total\\s*:?\\s*(?:rs\\.?|₹|inr)?\\s*([\\d,]+\\.\\d{1,2})","i")); // require decimals to avoid grabbing a qty
   // priority order, first non-zero wins
-  let total = [wordsNum,grand,paid,billT,orderT,netT,subT,plainT].find(v=>v && v>0) || 0;
+  let total = [wordsAmount,grand,paid,billT,orderT,netT,subT,lastBeforeWords,plainT].find(v=>v && v>0) || 0;
   if (!total) return null;
 
   // 3. Date — prefer an explicit Invoice/Order date label; support "06-Jun-2026" and "26 May 2026"
@@ -244,8 +267,9 @@ const parseGroceryBill = (raw) => {
 
   // Tax-invoice items such as Blinkit: product name sits after a UPC and before the first bracket
   if(items.length===0){
-    const hsnRe=/\d{4}\s+\d{4}\s+\d{4}\s+\d+\s+([A-Za-z][A-Za-z0-9 &',.\-]{3,70}?)\s*\x28/g;
-    let mm; while((mm=hsnRe.exec(text))!==null){ const c=clean(mm[1]); if(c.length>2 && !items.includes(c)) items.push(c); }
+    const flat=text.replace(/\s+/g," ");
+    const hsnRe=/\d{4}\s+\d{4}\s+\d{4}\s+\d+\s+([A-Za-z][A-Za-z &',.\-]{3,60}?)\s*\x28/g;
+    let mm; while((mm=hsnRe.exec(flat))!==null){ const c=clean(mm[1]); if(c.length>2 && !items.includes(c)) items.push(c); }
   }
 
   const note = items.join(", ");
