@@ -438,6 +438,18 @@ const nextDueByDay = (dueDay) => {
 };
 const daysUntil = (dateObj) => Math.round((new Date(dateObj.getFullYear(),dateObj.getMonth(),dateObj.getDate()) - _midnight())/86400000);
 const cycleOf = (dateObj) => `${dateObj.getFullYear()}-${String(dateObj.getMonth()+1).padStart(2,"0")}`;
+// Credit-card due date recurs monthly on the same day. Once this month's cycle is marked paid,
+// the due rolls to next month (so a paid card never shows as overdue).
+const cardDue = (c) => {
+  if(!c || !c.dueDate) return null;
+  const D = Number(String(c.dueDate).split("-")[2]) || 1;
+  const t=_midnight(), y=t.getFullYear(), m=t.getMonth();
+  const thisDue=new Date(y,m,D), thisCyc=cycleOf(thisDue);
+  const paidThisMonth = c.lastPaid===thisCyc;
+  const due = paidThisMonth ? new Date(y,m+1,D) : thisDue;
+  const cyc = paidThisMonth ? cycleOf(due) : thisCyc;
+  return { due, cycle:cyc, days:daysUntil(due), paidThisMonth };
+};
 // Build the list of payments due within `windowDays` and not marked paid for the current cycle.
 const pendingPayments = (data, windowDays=5) => {
   const out=[];
@@ -450,9 +462,8 @@ const pendingPayments = (data, windowDays=5) => {
     if(r.lastPaid!==cyc && dd<=windowDays) out.push({key:"rec-"+r.id,kind:"recurring",id:r.id,label:r.label,sub:r.category||"Recurring",amount:r.amount||0,due,days:dd,cycle:cyc,color:"#e040fb"});
   });
   (data.cards||[]).forEach(c=>{
-    if(!c.dueDate) return;
-    const due=new Date(c.dueDate), dd=daysUntil(due), cyc=c.dueDate;
-    if(c.lastPaid!==cyc && dd<=windowDays) out.push({key:"card-"+c.id,kind:"card",id:c.id,label:c.label||("Card ••"+(c.last4||"")),sub:"Credit Card",amount:c.outstanding||0,due,days:dd,cycle:cyc,color:"#4fc3f7"});
+    const info=cardDue(c); if(!info) return;
+    if(!info.paidThisMonth && info.days<=windowDays) out.push({key:"card-"+c.id,kind:"card",id:c.id,label:c.label||("Card ••"+(c.last4||"")),sub:"Credit Card",amount:c.outstanding||0,due:info.due,days:info.days,cycle:info.cycle,color:"#4fc3f7"});
   });
   return out.sort((a,b)=>a.due-b.due);
 };
@@ -2375,7 +2386,10 @@ function EMIDebt({data,setData}){
           {cards.length===0&&<div style={{fontSize:12,color:"rgba(255,255,255,.3)",marginBottom:8}}>No cards yet. Tap + to add one.</div>}
           {cards.map(c=>{
             const open=openCard===("card-"+c.id);
-            const daysLeft=c.dueDate?daysUntil(new Date(c.dueDate)):null;
+            const info=cardDue(c);
+            const daysLeft=info?info.days:null;
+            const paidThis=info?info.paidThisMonth:false;
+            const dueColor=paidThis?"#00c878":(daysLeft!==null&&daysLeft<0?"#ff5370":daysLeft!==null&&daysLeft<=2?"#ff5370":daysLeft!==null&&daysLeft<=5?"#ffd700":"rgba(255,255,255,.35)");
             return(
               <div key={c.id} className="fade-up" onClick={()=>tapToggle("card-"+c.id)} style={{background:"rgba(79,195,247,.05)",border:"1px solid "+(open?"rgba(79,195,247,.35)":"rgba(79,195,247,.14)"),borderRadius:15,padding:"14px 15px",marginBottom:10,cursor:"pointer"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -2385,11 +2399,15 @@ function EMIDebt({data,setData}){
                   </div>
                   <div style={{textAlign:"right"}}>
                     <div className="mono" style={{fontSize:16,fontWeight:700,color:"#ff5370"}}>{fmtK(c.outstanding)}</div>
-                    <div style={{fontSize:10,color:daysLeft!==null&&daysLeft<=2?"#ff5370":daysLeft!==null&&daysLeft<=5?"#ffd700":"rgba(255,255,255,.35)",marginTop:2}}>{c.dueDate?`Due ${fmtDate(c.dueDate)}`:"No due date"}{daysLeft!==null?` · ${dueLabel(daysLeft)}`:""}</div>
+                    <div style={{fontSize:10,color:dueColor,marginTop:2}}>{info?`Due ${fmtDate(info.due)}`:"No due date"}{daysLeft!==null?` · ${paidThis?"Paid ✓":dueLabel(daysLeft)}`:""}</div>
                   </div>
                 </div>
                 {open&&(
                   <div onClick={e=>e.stopPropagation()}>
+                    {info&&(paidThis
+                      ? <button onClick={()=>setData(d=>({...d,cards:d.cards.map(x=>x.id===c.id?{...x,lastPaid:""}:x)}))} style={{width:"100%",marginTop:9,padding:"8px",borderRadius:9,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.15)",color:"rgba(255,255,255,.6)",fontSize:12,fontWeight:700}}>↶ Undo paid (this month)</button>
+                      : <button onClick={()=>setData(d=>({...d,cards:d.cards.map(x=>x.id===c.id?{...x,lastPaid:info.cycle}:x)}))} style={{width:"100%",marginTop:9,padding:"8px",borderRadius:9,background:"rgba(0,200,120,.12)",border:"1px solid rgba(0,200,120,.3)",color:"#00c878",fontSize:12,fontWeight:700}}>✓ Mark Paid (this month)</button>
+                    )}
                     <ActionBar onEdit={()=>setEditCard({...c,bank:c.bank||"",outstanding:String(c.outstanding),limit:String(c.limit||100000)})} onDelete={()=>setConfirmDel({type:"card",id:c.id,label:c.label})}/>
                   </div>
                 )}
