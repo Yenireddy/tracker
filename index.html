@@ -294,16 +294,20 @@ const parseSMS = (text) => {
   const expenseHit=/(debit|spent|withdrawn|pur\/|p2m|purchase|is approved|approved\.|paid)/i.test(low);
   const incomeHit=/(credited|received|deposited|salary|refund|cr\b)/i.test(low) && !/credit card/i.test(low);
   const type=(incomeHit && !expenseHit)?"income":"expense";
-  // merchant
-  let merchant="";
-  let m;
-  if(m=t.match(/at\s+(.+?)\s+is\s+approved/i)) merchant=m[1];
+  // merchant / description
+  let merchant="", fromInfo=false, m;
+  if(m=t.match(/transaction\s*info\s*:?\s*([A-Za-z0-9 \/._-]{3,60})/i)){ merchant=m[1].trim(); fromInfo=true; }
+  else if(m=t.match(/(?:remarks|narration|description)\s*:?\s*([A-Za-z0-9 \/._-]{3,60})/i)){ merchant=m[1].trim(); fromInfo=true; }
+  else if(m=t.match(/at\s+(.+?)\s+is\s+approved/i)) merchant=m[1];
   else if(m=t.match(/UPI\/[A-Za-z0-9]+\/\d+\/([^\/]+?)(?:\.|$|available|ref)/i)) merchant=m[1];
   else if(m=t.match(/PUR\/([A-Za-z0-9 ]+?)\//i)) merchant=m[1];
-  else if(m=t.match(/(?:at|to|info:|\/)\s*([A-Za-z][A-Za-z0-9 .&'-]{2,40})/i)) merchant=m[1];
-  merchant=merchant.replace(/\b(com|ltd|limited|pvt|private)\b/gi,"").replace(/\s+/g," ").trim();
-  // tidy title case for ALLCAPS merchants
-  if(merchant && merchant===merchant.toUpperCase()) merchant=merchant.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
+  else if(m=t.match(/(?:\bat\s+|\bto\s+|info\s*:\s*|\/)([A-Za-z][A-Za-z0-9 .&'-]{2,40})/i)) merchant=m[1];
+  if(fromInfo){
+    merchant=merchant.replace(/\s+/g," ").trim();
+  } else {
+    merchant=merchant.replace(/\b(com|ltd|limited|pvt|private)\b/gi,"").replace(/\s+/g," ").trim();
+    if(merchant && merchant===merchant.toUpperCase()) merchant=merchant.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
+  }
   const cat = type==="income" ? "Other Income" : guessCat(merchant+" "+t);
   return {amount,date,merchant,type,cat,ok:!!amount};
 };
