@@ -268,7 +268,7 @@ const parseGroceryBill = (raw) => {
   // Tax-invoice items such as Blinkit: product name sits after a UPC and before the first bracket
   if(items.length===0){
     const flat=text.replace(/\s+/g," ");
-    const hsnRe=/\d{4}\s+\d{4}\s+\d{4}\s+\d+\s+([A-Za-z][A-Za-z &',.\-]{3,60}?)\s*\x28/g;
+    const hsnRe=/\d{4}\s+\d{4}\s+\d{4}\s+\d+\s+([A-Za-z][A-Za-z &',.\-\/]{3,60}?)\s*\x28/g;
     let mm; while((mm=hsnRe.exec(flat))!==null){ const c=clean(mm[1]); if(c.length>2 && !items.includes(c)) items.push(c); }
   }
 
