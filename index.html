@@ -556,8 +556,8 @@ function Modal({title,onClose,children}){
     return()=>{ document.body.style.overflow=prev; };
   },[]);
   const ui=(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.82)",backdropFilter:"blur(2px)",WebkitOverflowScrolling:"touch",zIndex:1000,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"24px 12px 60px"}} onClick={onClose}>
-      <div style={{width:"100%",maxWidth:430,background:"#0e1525",borderRadius:20,padding:"22px 20px 26px",border:"1px solid rgba(255,255,255,.08)",boxShadow:"0 16px 50px rgba(0,0,0,.6)"}} onClick={e=>e.stopPropagation()}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.82)",backdropFilter:"blur(2px)",WebkitOverflowScrolling:"touch",zIndex:1000,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"24px 12px 60px"}}>
+      <div style={{width:"100%",maxWidth:430,background:"#0e1525",borderRadius:20,padding:"22px 20px 26px",border:"1px solid rgba(255,255,255,.08)",boxShadow:"0 16px 50px rgba(0,0,0,.6)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
           <span style={{fontSize:17,fontWeight:700}}>{title}</span>
           <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"#fff",width:30,height:30,borderRadius:8,fontSize:15}}>✕</button>
