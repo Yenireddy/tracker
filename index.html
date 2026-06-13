@@ -385,6 +385,10 @@ const INIT = {
   recurring:[],
   valuables:[],
   bankBalances:[],
+  sheet:{ headers:["Item","Qty","Amount"], rows:[
+    {id:"r1",cells:["","",""]},{id:"r2",cells:["","",""]},{id:"r3",cells:["","",""]},
+    {id:"r4",cells:["","",""]},{id:"r5",cells:["","",""]},{id:"r6",cells:["","",""]}
+  ]},
   physicalGold:[],
   physicalSilver:[],
 };
@@ -2551,13 +2555,80 @@ function EMIDebt({data,setData}){
 // ══════════════════════════════════════════════════════════════════════════════
 // REPORTS
 // ══════════════════════════════════════════════════════════════════════════════
-function Reports({data}){
+function DataSheet({data,setData,onClose}){
+  const DEF={headers:["Item","Qty","Amount"],rows:[]};
+  const sheet=(data.sheet&&data.sheet.headers)?data.sheet:DEF;
+  const headers=sheet.headers, rows=sheet.rows;
+  useEffect(()=>{const o=document.body.style.overflow; document.body.style.overflow="hidden"; return ()=>{document.body.style.overflow=o;};},[]);
+  const setSheet=(fn)=>setData(d=>{const cur=(d.sheet&&d.sheet.headers)?d.sheet:DEF; return {...d,sheet:fn(cur)};});
+  const setCell=(ri,ci,v)=>setSheet(s=>({...s,rows:s.rows.map((r,i)=>i===ri?{...r,cells:r.cells.map((c,j)=>j===ci?v:c)}:r)}));
+  const setHeader=(ci,v)=>setSheet(s=>({...s,headers:s.headers.map((h,j)=>j===ci?v:h)}));
+  const addRow=()=>setSheet(s=>({...s,rows:[...s.rows,{id:uid(),cells:s.headers.map(()=>"")}]}));
+  const addCol=()=>setSheet(s=>({...s,headers:[...s.headers,"Col "+(s.headers.length+1)],rows:s.rows.map(r=>({...r,cells:[...r.cells,""]}))}));
+  const delRow=(ri)=>setSheet(s=>({...s,rows:s.rows.filter((_,i)=>i!==ri)}));
+  const delCol=(ci)=>setSheet(s=>(s.headers.length<=1?s:{...s,headers:s.headers.filter((_,j)=>j!==ci),rows:s.rows.map(r=>({...r,cells:r.cells.filter((_,j)=>j!==ci)}))}));
+  const totals=headers.map((_,ci)=>{let sum=0,has=false; rows.forEach(r=>{const raw=String(r.cells[ci]||"").replace(/[,\s₹]/g,""); if(raw!==""&&!isNaN(Number(raw))){sum+=Number(raw);has=true;}}); return has?sum:null;});
+  const COLW=118, NUMW=40;
+  const ui=(
+    <div style={{position:"fixed",inset:0,background:"#080b12",zIndex:1200,display:"flex",flexDirection:"column"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 16px 11px",borderBottom:"1px solid rgba(255,255,255,.08)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={onClose} style={{width:34,height:34,borderRadius:10,background:"rgba(255,255,255,.07)",border:"none",color:"#fff",fontSize:20,lineHeight:1}}>‹</button>
+          <div><div style={{fontSize:18,fontWeight:800}}>Data Sheet</div><div style={{fontSize:10,color:"rgba(255,255,255,.35)"}}>Rough notes · saved to cloud</div></div>
+        </div>
+        <div style={{display:"flex",gap:7}}>
+          <button onClick={addRow} style={{padding:"8px 11px",borderRadius:9,background:"rgba(0,240,220,.12)",border:"1px solid rgba(0,240,220,.3)",color:"#00f0dc",fontSize:12,fontWeight:700}}>+ Row</button>
+          <button onClick={addCol} style={{padding:"8px 11px",borderRadius:9,background:"rgba(124,58,237,.16)",border:"1px solid rgba(124,58,237,.35)",color:"#c4a5ff",fontSize:12,fontWeight:700}}>+ Col</button>
+        </div>
+      </div>
+      <div style={{flex:1,overflow:"auto",padding:"12px 12px 40px",WebkitOverflowScrolling:"touch"}}>
+        <div style={{display:"inline-block",minWidth:"100%"}}>
+          <div style={{display:"flex"}}>
+            <div style={{width:NUMW,flexShrink:0}}/>
+            {headers.map((h,ci)=>(
+              <div key={ci} style={{width:COLW,flexShrink:0,padding:"0 3px"}}>
+                <input value={h} onChange={e=>setHeader(ci,e.target.value)} placeholder={"Col "+(ci+1)} style={{width:"100%",boxSizing:"border-box",padding:"8px",background:"rgba(0,240,220,.08)",border:"1px solid rgba(0,240,220,.2)",borderRadius:8,color:"#00f0dc",fontSize:12,fontWeight:700,fontFamily:"inherit"}}/>
+                {headers.length>1&&<button onClick={()=>delCol(ci)} style={{width:"100%",marginTop:3,padding:"2px",borderRadius:6,background:"transparent",border:"none",color:"rgba(255,83,112,.5)",fontSize:9}}>✕ col</button>}
+              </div>
+            ))}
+          </div>
+          {rows.map((r,ri)=>(
+            <div key={r.id} style={{display:"flex",alignItems:"flex-start",marginTop:5}}>
+              <div style={{width:NUMW,flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center"}}>
+                <div style={{fontSize:10,color:"rgba(255,255,255,.3)",paddingTop:9}}>{ri+1}</div>
+                <button onClick={()=>delRow(ri)} style={{marginTop:1,padding:"1px 5px",borderRadius:6,background:"transparent",border:"none",color:"rgba(255,83,112,.5)",fontSize:11}}>✕</button>
+              </div>
+              {headers.map((_,ci)=>(
+                <div key={ci} style={{width:COLW,flexShrink:0,padding:"0 3px"}}>
+                  <input value={r.cells[ci]||""} onChange={e=>setCell(ri,ci,e.target.value)} style={{width:"100%",boxSizing:"border-box",padding:"9px 8px",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.09)",borderRadius:8,color:"#fff",fontSize:13,fontFamily:"inherit"}}/>
+                </div>
+              ))}
+            </div>
+          ))}
+          <div style={{display:"flex",marginTop:10,borderTop:"1px solid rgba(255,255,255,.1)",paddingTop:9}}>
+            <div style={{width:NUMW,flexShrink:0,fontSize:11,color:"rgba(255,255,255,.4)",textAlign:"center",paddingTop:9,fontWeight:700}}>Σ</div>
+            {headers.map((_,ci)=>(
+              <div key={ci} style={{width:COLW,flexShrink:0,padding:"0 3px"}}>
+                <div className="mono" style={{width:"100%",boxSizing:"border-box",padding:"9px 8px",background:totals[ci]!=null?"rgba(0,240,220,.07)":"transparent",border:"1px solid "+(totals[ci]!=null?"rgba(0,240,220,.18)":"transparent"),borderRadius:8,color:totals[ci]!=null?"#00f0dc":"transparent",fontSize:12,fontWeight:700,textAlign:"right"}}>{totals[ci]!=null?totals[ci].toLocaleString("en-IN",{maximumFractionDigits:2}):""}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{fontSize:10,color:"rgba(255,255,255,.25)",marginTop:14,paddingLeft:NUMW}}>Tip: type numbers in a column to see its total above (Σ). Tap ✕ to remove a row or column.</div>
+        </div>
+      </div>
+    </div>
+  );
+  return (typeof ReactDOM!=="undefined"&&ReactDOM.createPortal)?ReactDOM.createPortal(ui,document.body):ui;
+}
+
+function Reports({data,setData}){
   const {transactions,stocks,mfs,metalSchemes,physicalGold,physicalSilver,bankBalances,loans,cards,prices,valuables}=data;
   const [tab,setTab]=useState("overview");
   const [search,setSearch]=useState("");
   const [dateFrom,setDateFrom]=useState("");
   const [dateTo,setDateTo]=useState("");
   const [showFilters,setShowFilters]=useState(false);
+  const [showSheet,setShowSheet]=useState(false);
 
   const filtered=transactions.filter(t=>{
     const q=search.toLowerCase();
@@ -2622,9 +2693,12 @@ function Reports({data}){
           <div style={{fontSize:22,fontWeight:800}}>Analytics</div>
           <div style={{fontSize:11,color:"rgba(255,255,255,.3)"}}>FY 2025-26</div>
         </div>
-        <button onClick={()=>setShowFilters(!showFilters)} style={{padding:"7px 12px",borderRadius:10,border:`1px solid ${hasFilters?"#00f0dc":"rgba(255,255,255,.1)"}`,background:hasFilters?"rgba(0,240,220,.07)":"rgba(255,255,255,.04)",color:hasFilters?"#00f0dc":"rgba(255,255,255,.42)",fontSize:12,fontWeight:600}}>
-          ⚙ {hasFilters?"Filtered":"Filter"}
-        </button>
+        <div style={{display:"flex",gap:7}}>
+          <button onClick={()=>setShowSheet(true)} style={{padding:"7px 12px",borderRadius:10,border:"1px solid rgba(0,240,220,.25)",background:"rgba(0,240,220,.08)",color:"#00f0dc",fontSize:12,fontWeight:700}}>📊 Sheet</button>
+          <button onClick={()=>setShowFilters(!showFilters)} style={{padding:"7px 12px",borderRadius:10,border:`1px solid ${hasFilters?"#00f0dc":"rgba(255,255,255,.1)"}`,background:hasFilters?"rgba(0,240,220,.07)":"rgba(255,255,255,.04)",color:hasFilters?"#00f0dc":"rgba(255,255,255,.42)",fontSize:12,fontWeight:600}}>
+            ⚙ {hasFilters?"Filtered":"Filter"}
+          </button>
+        </div>
       </div>
 
       <div style={{padding:"12px 16px 0"}}>
@@ -2803,6 +2877,7 @@ function Reports({data}){
           </Card>
         </div>
       )}
+      {showSheet&&<DataSheet data={data} setData={setData} onClose={()=>setShowSheet(false)}/>}
     </div>
   );
 }
@@ -3179,10 +3254,70 @@ class ErrorBoundary extends React.Component{
   }
 }
 
+function Calculator({onClose}){
+  const [disp,setDisp]=useState("0");
+  const [acc,setAcc]=useState(null);
+  const [op,setOp]=useState(null);
+  const [fresh,setFresh]=useState(true);
+  const [hist,setHist]=useState("");
+  useEffect(()=>{const o=document.body.style.overflow;document.body.style.overflow="hidden";return ()=>{document.body.style.overflow=o;};},[]);
+  const numToStr=(n)=>{ if(!isFinite(n))return "Error"; const r=Math.round((n+Number.EPSILON)*1e10)/1e10; return String(r); };
+  const fmtView=(s)=>{ if(s==="Error")return "Error"; const neg=s.startsWith("-"); const body=neg?s.slice(1):s; const parts=body.split("."); const grouped=Number(parts[0]||"0").toLocaleString("en-IN"); let out=grouped; if(body.indexOf(".")>=0) out+="."+(parts[1]||""); return (neg?"-":"")+out; };
+  const apply=(a,b,o)=>{ if(o==="+")return a+b; if(o==="−")return a-b; if(o==="×")return a*b; if(o==="÷")return b===0?NaN:a/b; return b; };
+  const digit=(d)=>{ setDisp(p=>{ if(p==="Error")p="0"; if(fresh)return d; if(p==="0")return d; return p+d; }); setFresh(false); };
+  const dot=()=>{ setDisp(p=>{ if(fresh||p==="Error")return "0."; return p.indexOf(".")>=0?p:p+"."; }); setFresh(false); };
+  const chooseOp=(o)=>{ const cur=parseFloat(disp)||0; if(op!=null&&!fresh){ const r=apply(acc,cur,op); setAcc(r); setDisp(numToStr(r)); setHist(numToStr(r)+" "+o); } else { setAcc(cur); setHist(numToStr(cur)+" "+o); } setOp(o); setFresh(true); };
+  const equals=()=>{ if(op==null)return; const cur=parseFloat(disp)||0; const r=apply(acc,cur,op); setHist(numToStr(acc)+" "+op+" "+numToStr(cur)+" ="); setDisp(numToStr(r)); setAcc(null); setOp(null); setFresh(true); };
+  const clearAll=()=>{ setDisp("0"); setAcc(null); setOp(null); setFresh(true); setHist(""); };
+  const back=()=>{ setDisp(p=>{ if(fresh||p==="Error")return p; if(p.length<=1||(p.length===2&&p[0]==="-"))return "0"; return p.slice(0,-1); }); };
+  const pct=()=>{ setDisp(p=>numToStr((parseFloat(p)||0)/100)); setFresh(false); };
+  const neg=()=>{ setDisp(p=> (p==="0"||p==="Error")?p : (p[0]==="-"?p.slice(1):"-"+p)); };
+  const Bt=({label,onClick,bg,col})=>(<button onClick={onClick} style={{padding:"15px 0",borderRadius:14,border:"none",background:bg||"rgba(255,255,255,.06)",color:col||"#fff",fontSize:19,fontWeight:700,fontFamily:"inherit"}}>{label}</button>);
+  const opBg="rgba(124,58,237,.3)", opCol="#c4a5ff";
+  const ui=(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:1300,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(3px)",padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:340,background:"#0e1320",borderRadius:24,border:"1px solid rgba(255,255,255,.08)",padding:"16px",boxShadow:"0 20px 60px rgba(0,0,0,.6)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:15,fontWeight:800}}>🧮 Calculator</div>
+          <button onClick={onClose} style={{width:30,height:30,borderRadius:9,background:"rgba(255,255,255,.08)",border:"none",color:"#fff",fontSize:14}}>✕</button>
+        </div>
+        <div style={{background:"rgba(0,0,0,.3)",borderRadius:14,padding:"12px 16px",marginBottom:12,textAlign:"right",minHeight:60}}>
+          <div className="mono" style={{fontSize:12,color:"rgba(255,255,255,.35)",minHeight:16}}>{hist}</div>
+          <div className="mono" style={{fontSize:30,fontWeight:700,color:disp==="Error"?"#ff5370":"#fff",wordBreak:"break-all"}}>{fmtView(disp)}</div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+          <Bt label="C" onClick={clearAll} bg="rgba(255,83,112,.18)" col="#ff5370"/>
+          <Bt label="⌫" onClick={back} bg="rgba(255,255,255,.06)"/>
+          <Bt label="%" onClick={pct} bg={opBg} col={opCol}/>
+          <Bt label="÷" onClick={()=>chooseOp("÷")} bg={opBg} col={opCol}/>
+          <Bt label="7" onClick={()=>digit("7")}/>
+          <Bt label="8" onClick={()=>digit("8")}/>
+          <Bt label="9" onClick={()=>digit("9")}/>
+          <Bt label="×" onClick={()=>chooseOp("×")} bg={opBg} col={opCol}/>
+          <Bt label="4" onClick={()=>digit("4")}/>
+          <Bt label="5" onClick={()=>digit("5")}/>
+          <Bt label="6" onClick={()=>digit("6")}/>
+          <Bt label="−" onClick={()=>chooseOp("−")} bg={opBg} col={opCol}/>
+          <Bt label="1" onClick={()=>digit("1")}/>
+          <Bt label="2" onClick={()=>digit("2")}/>
+          <Bt label="3" onClick={()=>digit("3")}/>
+          <Bt label="+" onClick={()=>chooseOp("+")} bg={opBg} col={opCol}/>
+          <Bt label="±" onClick={neg}/>
+          <Bt label="0" onClick={()=>digit("0")}/>
+          <Bt label="." onClick={dot}/>
+          <Bt label="=" onClick={equals} bg="linear-gradient(135deg,#00f0dc,#00b8d9)" col="#000"/>
+        </div>
+      </div>
+    </div>
+  );
+  return (typeof ReactDOM!=="undefined"&&ReactDOM.createPortal)?ReactDOM.createPortal(ui,document.body):ui;
+}
+
 function App(){
   const [data,setDataRaw]=useState(null); // null = loading
   const [screen,setScreen]=useState("dash");
   const [saveStatus,setSaveStatus]=useState("idle"); // idle | saving | saved | error
+  const [showCalc,setShowCalc]=useState(false);
   const [unlocked,setUnlocked]=useState(false);
   const saveTimer=useRef(null);
   const isFirstLoad=useRef(true);
@@ -3263,7 +3398,7 @@ function App(){
     cashflow:<CashFlow data={data} setData={setData}/>,
     invest:<Investments data={data} setData={setData}/>,
     emi:<EMIDebt data={data} setData={setData}/>,
-    reports:<Reports data={data}/>,
+    reports:<Reports data={data} setData={setData}/>,
     profile:<Profile data={data} setData={setData} nav={nav}/>,
     prices:<PriceUpdate data={data} setData={setData} nav={nav}/>,
   };
@@ -3306,6 +3441,12 @@ function App(){
             {saveStatus==="saving"?"Saving to cloud…":saveStatus==="saved"?"Saved to cloud":"Save failed — check connection"}
           </div>
         )}
+
+        {/* Calculator — available on every screen except Reports */}
+        {screen!=="reports"&&(
+          <button onClick={()=>setShowCalc(true)} title="Calculator" style={{position:"fixed",bottom:90,left:20,width:48,height:48,borderRadius:15,background:"rgba(124,58,237,.92)",border:"1px solid rgba(196,165,255,.45)",color:"#fff",fontSize:21,zIndex:50,boxShadow:"0 8px 22px rgba(124,58,237,.45)"}}>🧮</button>
+        )}
+        {showCalc&&<Calculator onClose={()=>setShowCalc(false)}/>}
 
         {/* Bottom Nav */}
         {!["profile","prices"].includes(screen)&&(
