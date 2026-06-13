@@ -385,7 +385,7 @@ const INIT = {
   recurring:[],
   valuables:[],
   bankBalances:[],
-  sheet:{ headers:["Item","Qty","Amount"], rows:[
+  sheet:{ headers:["Item","Qty","Amount"], colW:[150,90,120], rowH:44, rows:[
     {id:"r1",cells:["","",""]},{id:"r2",cells:["","",""]},{id:"r3",cells:["","",""]},
     {id:"r4",cells:["","",""]},{id:"r5",cells:["","",""]},{id:"r6",cells:["","",""]}
   ]},
@@ -2557,18 +2557,65 @@ function EMIDebt({data,setData}){
 // ══════════════════════════════════════════════════════════════════════════════
 function DataSheet({data,setData,onClose}){
   const DEF={headers:["Item","Qty","Amount"],rows:[]};
-  const sheet=(data.sheet&&data.sheet.headers)?data.sheet:DEF;
-  const headers=sheet.headers, rows=sheet.rows;
+  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+  const norm=(s)=>{const headers=s.headers||DEF.headers; return {headers, rows:s.rows||[], colW:(Array.isArray(s.colW)&&s.colW.length===headers.length)?s.colW:headers.map(()=>120), rowH:s.rowH||44};};
+  const sheet=norm(data.sheet||DEF);
+  const headers=sheet.headers, rows=sheet.rows, colW=sheet.colW, rowH=sheet.rowH;
   useEffect(()=>{const o=document.body.style.overflow; document.body.style.overflow="hidden"; return ()=>{document.body.style.overflow=o;};},[]);
-  const setSheet=(fn)=>setData(d=>{const cur=(d.sheet&&d.sheet.headers)?d.sheet:DEF; return {...d,sheet:fn(cur)};});
+  const setSheet=(fn)=>setData(d=>{const cur=norm(d.sheet||DEF); return {...d,sheet:fn(cur)};});
   const setCell=(ri,ci,v)=>setSheet(s=>({...s,rows:s.rows.map((r,i)=>i===ri?{...r,cells:r.cells.map((c,j)=>j===ci?v:c)}:r)}));
   const setHeader=(ci,v)=>setSheet(s=>({...s,headers:s.headers.map((h,j)=>j===ci?v:h)}));
   const addRow=()=>setSheet(s=>({...s,rows:[...s.rows,{id:uid(),cells:s.headers.map(()=>"")}]}));
-  const addCol=()=>setSheet(s=>({...s,headers:[...s.headers,"Col "+(s.headers.length+1)],rows:s.rows.map(r=>({...r,cells:[...r.cells,""]}))}));
+  const addCol=()=>setSheet(s=>({...s,headers:[...s.headers,"Col "+(s.headers.length+1)],colW:[...s.colW,120],rows:s.rows.map(r=>({...r,cells:[...r.cells,""]}))}));
   const delRow=(ri)=>setSheet(s=>({...s,rows:s.rows.filter((_,i)=>i!==ri)}));
-  const delCol=(ci)=>setSheet(s=>(s.headers.length<=1?s:{...s,headers:s.headers.filter((_,j)=>j!==ci),rows:s.rows.map(r=>({...r,cells:r.cells.filter((_,j)=>j!==ci)}))}));
-  const totals=headers.map((_,ci)=>{let sum=0,has=false; rows.forEach(r=>{const raw=String(r.cells[ci]||"").replace(/[,\s₹]/g,""); if(raw!==""&&!isNaN(Number(raw))){sum+=Number(raw);has=true;}}); return has?sum:null;});
-  const COLW=118, NUMW=40;
+  const delCol=(ci)=>setSheet(s=>(s.headers.length<=1?s:{...s,headers:s.headers.filter((_,j)=>j!==ci),colW:s.colW.filter((_,j)=>j!==ci),rows:s.rows.map(r=>({...r,cells:r.cells.filter((_,j)=>j!==ci)}))}));
+  const wider=(ci,d)=>setSheet(s=>({...s,colW:s.colW.map((w,j)=>j===ci?clamp(w+d,80,380):w)}));
+  const taller=(d)=>setSheet(s=>({...s,rowH:clamp(s.rowH+d,34,200)}));
+  const [focusKey,setFocusKey]=useState("");
+  // ── Formula support: a cell starting with "=" is computed. Supports + - * / ( ) and cell refs like A1, B2.
+  const colLetter=(i)=>{let s="",n=i+1; while(n>0){const m=(n-1)%26; s=String.fromCharCode(65+m)+s; n=Math.floor((n-1)/26);} return s;};
+  const refToIdx=(letters)=>{let n=0; for(const ch of letters.toUpperCase()) n=n*26+(ch.charCodeAt(0)-64); return n-1;};
+  const rawAt=(ri,ci)=>{const r=rows[ri]; return r?String(r.cells[ci]==null?"":r.cells[ci]):"";};
+  const evalExpr=(str)=>{
+    const LP="\x28", RP="\x29";
+    const s=str.replace(/×/g,"*").replace(/÷/g,"/");
+    const toks=[]; let i=0;
+    while(i<s.length){const c=s[i];
+      if(c===" "){i++;continue;}
+      if(("+-*/"+LP+RP).indexOf(c)>=0){toks.push(c);i++;continue;}
+      if(/[0-9.]/.test(c)){let j=i; while(j<s.length&&/[0-9.]/.test(s[j]))j++; toks.push(parseFloat(s.slice(i,j))); i=j; continue;}
+      return NaN;
+    }
+    const out=[],ops=[],prec={"+":1,"-":1,"*":2,"/":2};
+    for(let k=0;k<toks.length;k++){const t=toks[k];
+      if(typeof t==="number"){out.push(t);}
+      else if(t===LP){ops.push(t);}
+      else if(t===RP){while(ops.length&&ops[ops.length-1]!==LP)out.push(ops.pop()); if(!ops.length)return NaN; ops.pop();}
+      else{const prev=toks[k-1]; const unary=(t==="-"||t==="+")&&(k===0||prev===LP||"+-*/".indexOf(prev)>=0);
+        if(unary){ if(t==="-"){out.push(0);ops.push("-");} continue; }
+        while(ops.length&&ops[ops.length-1]!==LP&&prec[ops[ops.length-1]]>=prec[t])out.push(ops.pop());
+        ops.push(t);
+      }
+    }
+    while(ops.length){const o=ops.pop(); if(o===LP)return NaN; out.push(o);}
+    const st=[];
+    for(const t of out){ if(typeof t==="number")st.push(t);
+      else{const b=st.pop(),a=st.pop(); if(a===undefined||b===undefined)return NaN; st.push(t==="+"?a+b:t==="-"?a-b:t==="*"?a*b:(b===0?NaN:a/b));} }
+    return st.length===1?st[0]:NaN;
+  };
+  const computeCell=(ri,ci,seen)=>{
+    const raw=rawAt(ri,ci).trim();
+    if(raw[0]!=="="){const v=parseFloat(raw.replace(/[,\s₹]/g,"")); return isNaN(v)?NaN:v;}
+    const key=ri+":"+ci; if(seen.has(key))return NaN;
+    const body=raw.slice(1).replace(/\b([A-Za-z]+)(\d+)\b/g,(mm,col,row)=>{const c2=refToIdx(col),r2=parseInt(row,10)-1; if(c2<0||c2>=headers.length||r2<0||r2>=rows.length)return "0"; const v=computeCell(r2,c2,new Set(seen).add(key)); return isNaN(v)?"0":String(v);});
+    return evalExpr(body);
+  };
+  const fmtNum=(v)=>Number(Math.round((v+Number.EPSILON)*1e6)/1e6).toLocaleString("en-IN",{maximumFractionDigits:6});
+  const cellShow=(ri,ci)=>{const raw=rawAt(ri,ci); if(raw.trim()[0]!=="=")return raw; const v=computeCell(ri,ci,new Set()); return isNaN(v)?"#ERR":fmtNum(v);};
+  const isFormula=(ri,ci)=>rawAt(ri,ci).trim()[0]==="=";
+  const totals=headers.map((_,ci)=>{let sum=0,has=false; rows.forEach((r,ri)=>{const v=computeCell(ri,ci,new Set()); if(!isNaN(v)){sum+=v;has=true;}}); return has?sum:null;});
+  const NUMW=40;
+  const stepBtn={width:24,height:22,borderRadius:6,border:"1px solid rgba(255,255,255,.14)",background:"rgba(255,255,255,.05)",color:"rgba(255,255,255,.7)",fontSize:13,fontWeight:700,lineHeight:1,padding:0};
   const ui=(
     <div style={{position:"fixed",inset:0,background:"#080b12",zIndex:1200,display:"flex",flexDirection:"column"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 16px 11px",borderBottom:"1px solid rgba(255,255,255,.08)"}}>
@@ -2581,14 +2628,26 @@ function DataSheet({data,setData,onClose}){
           <button onClick={addCol} style={{padding:"8px 11px",borderRadius:9,background:"rgba(124,58,237,.16)",border:"1px solid rgba(124,58,237,.35)",color:"#c4a5ff",fontSize:12,fontWeight:700}}>+ Col</button>
         </div>
       </div>
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 16px",borderBottom:"1px solid rgba(255,255,255,.05)"}}>
+        <span style={{fontSize:11,color:"rgba(255,255,255,.4)",fontWeight:600}}>Row height</span>
+        <button onClick={()=>taller(-12)} style={stepBtn}>−</button>
+        <span className="mono" style={{fontSize:11,color:"#fff",minWidth:34,textAlign:"center"}}>{rowH}px</span>
+        <button onClick={()=>taller(12)} style={stepBtn}>+</button>
+        <span style={{fontSize:10,color:"rgba(255,255,255,.3)",marginLeft:8}}>· widen a column with ‹ › under its name</span>
+      </div>
       <div style={{flex:1,overflow:"auto",padding:"12px 12px 40px",WebkitOverflowScrolling:"touch"}}>
         <div style={{display:"inline-block",minWidth:"100%"}}>
           <div style={{display:"flex"}}>
             <div style={{width:NUMW,flexShrink:0}}/>
             {headers.map((h,ci)=>(
-              <div key={ci} style={{width:COLW,flexShrink:0,padding:"0 3px"}}>
+              <div key={ci} style={{width:colW[ci],flexShrink:0,padding:"0 3px"}}>
+                <div style={{fontSize:9,color:"rgba(255,255,255,.28)",textAlign:"center",marginBottom:2,fontWeight:700,letterSpacing:".08em"}}>{colLetter(ci)}</div>
                 <input value={h} onChange={e=>setHeader(ci,e.target.value)} placeholder={"Col "+(ci+1)} style={{width:"100%",boxSizing:"border-box",padding:"8px",background:"rgba(0,240,220,.08)",border:"1px solid rgba(0,240,220,.2)",borderRadius:8,color:"#00f0dc",fontSize:12,fontWeight:700,fontFamily:"inherit"}}/>
-                {headers.length>1&&<button onClick={()=>delCol(ci)} style={{width:"100%",marginTop:3,padding:"2px",borderRadius:6,background:"transparent",border:"none",color:"rgba(255,83,112,.5)",fontSize:9}}>✕ col</button>}
+                <div style={{display:"flex",justifyContent:"center",alignItems:"center",gap:5,marginTop:4}}>
+                  <button onClick={()=>wider(ci,-28)} title="Narrower" style={{...stepBtn,width:26}}>‹</button>
+                  <button onClick={()=>wider(ci,28)} title="Wider" style={{...stepBtn,width:26}}>›</button>
+                  {headers.length>1&&<button onClick={()=>delCol(ci)} title="Delete column" style={{...stepBtn,width:26,color:"rgba(255,83,112,.7)",borderColor:"rgba(255,83,112,.25)"}}>✕</button>}
+                </div>
               </div>
             ))}
           </div>
@@ -2598,22 +2657,22 @@ function DataSheet({data,setData,onClose}){
                 <div style={{fontSize:10,color:"rgba(255,255,255,.3)",paddingTop:9}}>{ri+1}</div>
                 <button onClick={()=>delRow(ri)} style={{marginTop:1,padding:"1px 5px",borderRadius:6,background:"transparent",border:"none",color:"rgba(255,83,112,.5)",fontSize:11}}>✕</button>
               </div>
-              {headers.map((_,ci)=>(
-                <div key={ci} style={{width:COLW,flexShrink:0,padding:"0 3px"}}>
-                  <input value={r.cells[ci]||""} onChange={e=>setCell(ri,ci,e.target.value)} style={{width:"100%",boxSizing:"border-box",padding:"9px 8px",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.09)",borderRadius:8,color:"#fff",fontSize:13,fontFamily:"inherit"}}/>
+              {headers.map((_,ci)=>{const fk=ri+":"+ci, formula=isFormula(ri,ci); return(
+                <div key={ci} style={{width:colW[ci],flexShrink:0,padding:"0 3px"}}>
+                  <textarea value={focusKey===fk?rawAt(ri,ci):cellShow(ri,ci)} onFocus={()=>setFocusKey(fk)} onBlur={()=>setFocusKey("")} onChange={e=>setCell(ri,ci,e.target.value)} rows={1} style={{width:"100%",height:rowH,boxSizing:"border-box",padding:"9px 8px",background:formula?"rgba(0,240,220,.06)":"rgba(255,255,255,.04)",border:"1px solid "+(formula?"rgba(0,240,220,.22)":"rgba(255,255,255,.09)"),borderRadius:8,color:formula&&focusKey!==fk?"#00f0dc":"#fff",fontSize:13,fontFamily:"inherit",resize:"none",overflow:"auto",lineHeight:1.3,whiteSpace:"pre-wrap",wordBreak:"break-word"}}/>
                 </div>
-              ))}
+              );})}
             </div>
           ))}
           <div style={{display:"flex",marginTop:10,borderTop:"1px solid rgba(255,255,255,.1)",paddingTop:9}}>
             <div style={{width:NUMW,flexShrink:0,fontSize:11,color:"rgba(255,255,255,.4)",textAlign:"center",paddingTop:9,fontWeight:700}}>Σ</div>
             {headers.map((_,ci)=>(
-              <div key={ci} style={{width:COLW,flexShrink:0,padding:"0 3px"}}>
+              <div key={ci} style={{width:colW[ci],flexShrink:0,padding:"0 3px"}}>
                 <div className="mono" style={{width:"100%",boxSizing:"border-box",padding:"9px 8px",background:totals[ci]!=null?"rgba(0,240,220,.07)":"transparent",border:"1px solid "+(totals[ci]!=null?"rgba(0,240,220,.18)":"transparent"),borderRadius:8,color:totals[ci]!=null?"#00f0dc":"transparent",fontSize:12,fontWeight:700,textAlign:"right"}}>{totals[ci]!=null?totals[ci].toLocaleString("en-IN",{maximumFractionDigits:2}):""}</div>
               </div>
             ))}
           </div>
-          <div style={{fontSize:10,color:"rgba(255,255,255,.25)",marginTop:14,paddingLeft:NUMW}}>Tip: type numbers in a column to see its total above (Σ). Tap ✕ to remove a row or column.</div>
+          <div style={{fontSize:10,color:"rgba(255,255,255,.25)",marginTop:14,paddingLeft:NUMW}}>Tip: start a cell with <span style={{color:"#00f0dc"}}>=</span> to calculate — e.g. <span style={{color:"#00f0dc"}}>=1200*3</span> or <span style={{color:"#00f0dc"}}>=A1+B1</span> (letters = columns, numbers = rows). Use + − * / and ( ). ‹ › resize a column. Tap ✕ to remove a row or column.</div>
         </div>
       </div>
     </div>
