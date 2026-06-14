@@ -2947,6 +2947,41 @@ function Reports({data,setData}){
 function PriceUpdate({data,setData,nav}){
   const {prices}=data;
   const [pF,setPF]=useState({gold22k:String(prices.gold22k),silver999:String(prices.silver999),usdRate:String(data.usdRate)});
+  const [fetching,setFetching]=useState(false);
+  const [fetchMsg,setFetchMsg]=useState("");
+
+  // Best-effort free live price: Yahoo Finance (NSE .NS) read through a public CORS relay.
+  async function getPrice(ysym){
+    const yurl="https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(ysym)+"?interval=1d&range=1d";
+    const proxies=[u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u), u=>"https://corsproxy.io/?url="+encodeURIComponent(u)];
+    for(const p of proxies){
+      try{
+        const res=await fetch(p(yurl),{cache:"no-store"});
+        if(!res.ok) continue;
+        const j=await res.json();
+        const r=j&&j.chart&&j.chart.result&&j.chart.result[0]&&j.chart.result[0].meta;
+        const px=r&&(r.regularMarketPrice||r.previousClose);
+        if(px&&px>0) return Math.round(px*100)/100;
+      }catch(e){}
+    }
+    return null;
+  }
+  async function fetchLive(){
+    const stocks=data.stocks||[];
+    if(!stocks.length){setFetchMsg("No stocks to update.");return;}
+    setFetching(true); setFetchMsg("Starting…");
+    const updates={}; let done=0, failed=0;
+    for(let i=0;i<stocks.length;i++){
+      const s=stocks[i]; const sym=String(s.symbol||"").trim();
+      if(sym){ const ysym=sym.indexOf(".")>=0?sym:sym+".NS"; const px=await getPrice(ysym); if(px){updates[s.id]=px;done++;} else failed++; }
+      else failed++;
+      setFetchMsg(`Fetching ${i+1}/${stocks.length}  ·  ✓ ${done}  ✗ ${failed}`);
+      await new Promise(r=>setTimeout(r,180));
+    }
+    if(done>0) setData(d=>({...d,stocks:d.stocks.map(s=>updates[s.id]!=null?{...s,currentPrice:updates[s.id]}:s),prices:{...d.prices,lastUpdated:today()}}));
+    setFetching(false);
+    setFetchMsg(done>0?`✅ Updated ${done} stock${done!==1?"s":""}${failed?`, ${failed} not found`:""} · saved to cloud.`:"Couldn't reach the price service. Please try again in a minute.");
+  }
 
   function save(){
     setData(d=>({...d,usdRate:Number(pF.usdRate)||d.usdRate,prices:{...d.prices,gold22k:Number(pF.gold22k)||d.prices.gold22k,silver999:Number(pF.silver999)||d.prices.silver999,lastUpdated:today()}}));
@@ -2965,10 +3000,17 @@ function PriceUpdate({data,setData,nav}){
       </div>
 
       <div style={{padding:"16px 16px 0"}}>
-        <div style={{background:"rgba(255,213,0,.06)",border:"1px solid rgba(255,213,0,.14)",borderRadius:13,padding:"12px 14px",marginBottom:18}}>
+        <div style={{background:"rgba(255,213,0,.06)",border:"1px solid rgba(255,213,0,.14)",borderRadius:13,padding:"12px 14px",marginBottom:14}}>
           <div style={{fontSize:12,color:"rgba(255,213,0,.75)",fontWeight:600,marginBottom:3}}>📅 Last updated: {prices.lastUpdated}</div>
           <div style={{fontSize:11,color:"rgba(255,255,255,.3)"}}>Update once daily. All metal values and USD conversions reflect the new rates immediately.</div>
         </div>
+
+        <Card style={{marginBottom:18,border:"1px solid rgba(0,240,220,.18)"}}>
+          <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>📈 Equity Live Update</div>
+          <div style={{fontSize:11,color:"rgba(255,255,255,.4)",marginBottom:11}}>Fetches current NSE prices for all your stocks at once. Mutual funds stay manual. Free &amp; best-effort — a few symbols (some ETFs) may not be found, and those keep their last price.</div>
+          <button onClick={fetchLive} disabled={fetching} style={{width:"100%",padding:"13px",borderRadius:12,background:fetching?"rgba(255,255,255,.08)":"linear-gradient(135deg,#00f0dc,#00b8d9)",border:"none",color:fetching?"#888":"#000",fontSize:14,fontWeight:700}}>{fetching?"Updating…":"↻ Update all equity prices"}</button>
+          {fetchMsg&&<div style={{fontSize:11,color:"rgba(255,255,255,.6)",marginTop:9,textAlign:"center"}}>{fetchMsg}</div>}
+        </Card>
 
         {[["🥇 Gold 22K (₹ per gram)","gold22k","#ffd700",`Currently ₹${prices.gold22k}/g`],
           ["🥈 Silver 999 (₹ per gram)","silver999","#c0c0c0",`Currently ₹${prices.silver999}/g`],
