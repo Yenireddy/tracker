@@ -1179,6 +1179,8 @@ function Investments({data,setData}){
   const [showAdd,setShowAdd]=useState(false);
   const [showScheme,setShowScheme]=useState(null);
   const [showNav,setShowNav]=useState(false);
+  const [liveFetching,setLiveFetching]=useState(false);
+  const [liveMsg,setLiveMsg]=useState("");
   const [showImport,setShowImport]=useState(false);
   const [importMode,setImportMode]=useState("paste");
   const [importText,setImportText]=useState("");
@@ -1258,6 +1260,40 @@ function Investments({data,setData}){
       mfs:d.mfs.map(m=>navU[`m${m.id}`]?{...m,currentNAV:Number(navU[`m${m.id}`]),navUpdated:updatedToday}:m),
     }));
     setShowNav(false); setNavU({});
+  }
+
+  // Best-effort free live price: Yahoo Finance (NSE .NS) via a public CORS relay.
+  async function getLivePrice(ysym){
+    const yurl="https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(ysym)+"?interval=1d&range=1d";
+    const proxies=[u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u), u=>"https://corsproxy.io/?url="+encodeURIComponent(u)];
+    for(const p of proxies){
+      try{
+        const res=await fetch(p(yurl),{cache:"no-store"});
+        if(!res.ok) continue;
+        const j=await res.json();
+        const m=j&&j.chart&&j.chart.result&&j.chart.result[0]&&j.chart.result[0].meta;
+        const px=m&&(m.regularMarketPrice||m.previousClose);
+        if(px&&px>0) return Math.round(px*100)/100;
+      }catch(e){}
+    }
+    return null;
+  }
+  async function fetchLivePrices(){
+    const list=data.stocks||[];
+    if(!list.length){setLiveMsg("No stocks to update.");return;}
+    setLiveFetching(true); setLiveMsg("Starting…");
+    const updates={}; let done=0, failed=0;
+    for(let i=0;i<list.length;i++){
+      const s=list[i]; const sym=String(s.symbol||"").trim();
+      if(sym){ const ysym=sym.indexOf(".")>=0?sym:sym+".NS"; const px=await getLivePrice(ysym); if(px){updates[s.id]=px;done++;} else failed++; }
+      else failed++;
+      setLiveMsg(`Fetching ${i+1}/${list.length}  ·  ✓ ${done}  ✗ ${failed}`);
+      await new Promise(r=>setTimeout(r,180));
+    }
+    const ts=today();
+    if(done>0) setData(d=>({...d,stocks:d.stocks.map(s=>updates[s.id]!=null?{...s,currentPrice:updates[s.id],priceUpdated:ts}:s),prices:{...d.prices,lastUpdated:ts}}));
+    setLiveFetching(false);
+    setLiveMsg(done>0?`✅ Updated ${done} stock${done!==1?"s":""}${failed?`, ${failed} not found`:""} · saved to cloud.`:"⚠ Couldn't reach the price service. Please try again in a minute.");
   }
 
   function saveEditStock(){
@@ -1874,6 +1910,14 @@ function Investments({data,setData}){
                 </div>
               </div>
             )}
+
+            {/* Auto live update for equities */}
+            <div style={{background:"rgba(0,240,220,.05)",border:"1px solid rgba(0,240,220,.2)",borderRadius:12,padding:"12px 14px",marginBottom:16}}>
+              <div style={{fontSize:12,fontWeight:700,marginBottom:3}}>⚡ Auto-fetch equity prices</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.4)",marginBottom:10}}>Pulls live NSE prices for all stocks at once (free, best-effort). Funds stay manual. On weekends/holidays you'll get the last trading day's close.</div>
+              <button onClick={fetchLivePrices} disabled={liveFetching} style={{width:"100%",padding:"12px",borderRadius:11,background:liveFetching?"rgba(255,255,255,.08)":"linear-gradient(135deg,#00f0dc,#00b8d9)",border:"none",color:liveFetching?"#888":"#000",fontSize:13,fontWeight:700}}>{liveFetching?"Updating…":"↻ Update all equity prices now"}</button>
+              {liveMsg&&<div style={{fontSize:11,color:"rgba(255,255,255,.62)",marginTop:9,textAlign:"center"}}>{liveMsg}</div>}
+            </div>
 
             {/* STOCKS */}
             <div style={{fontWeight:700,fontSize:11,color:"rgba(255,255,255,.4)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>Equity Shares — CMP (₹)</div>
