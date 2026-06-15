@@ -891,6 +891,7 @@ function CashFlow({data,setData}){
   const [dateFrom,setDateFrom]=useState(today());
   const [dateTo,setDateTo]=useState(today());
   const [catFilter,setCatFilter]=useState("All");
+  const [typeFilter,setTypeFilter]=useState("All"); // All | Income | Expense (dropdown)
   const [showAdd,setShowAdd]=useState(false);
   const [showFilters,setShowFilters]=useState(false);
   const [editTx,setEditTx]=useState(null);
@@ -911,12 +912,13 @@ function CashFlow({data,setData}){
     const mF=!dateFrom||t.date>=dateFrom;
     const mT=!dateTo||t.date<=dateTo;
     const mC=catFilter==="All"||t.cat===catFilter;
-    return mQ&&mF&&mT&&mC;
+    const mTy=typeFilter==="All"||t.type===typeFilter.toLowerCase();
+    return mQ&&mF&&mT&&mC&&mTy;
   });
 
   const totalIn=filtered.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
   const totalOut=filtered.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
-  const hasFilters=!!(search||dateFrom||dateTo||catFilter!=="All");
+  const hasFilters=!!(search||dateFrom||dateTo||catFilter!=="All"||typeFilter!=="All");
 
   const grouped={};
   filtered.forEach(t=>{if(!grouped[t.date])grouped[t.date]=[];grouped[t.date].push(t);});
@@ -1005,8 +1007,8 @@ function CashFlow({data,setData}){
             <FI label="From" type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
             <FI label="To" type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
           </div>
-          <FS label="Category" value={catFilter} onChange={e=>setCatFilter(e.target.value)} options={allCats}/>
-          {(search||catFilter!=="All")&&<button onClick={()=>{setSearch("");setCatFilter("All");}} style={{background:"rgba(255,83,112,.1)",border:"1px solid rgba(255,83,112,.18)",borderRadius:9,padding:"7px 14px",color:"#ff5370",fontSize:12,fontWeight:600,width:"100%",marginTop:2}}>Clear Search & Category</button>}
+          <FS label="Type" value={typeFilter} onChange={e=>setTypeFilter(e.target.value)} options={["All","Income","Expense"]}/>
+          {(search||catFilter!=="All"||typeFilter!=="All")&&<button onClick={()=>{setSearch("");setCatFilter("All");setTypeFilter("All");}} style={{background:"rgba(255,83,112,.1)",border:"1px solid rgba(255,83,112,.18)",borderRadius:9,padding:"7px 14px",color:"#ff5370",fontSize:12,fontWeight:600,width:"100%",marginTop:2}}>Clear Search & Filters</button>}
         </div>
       )}
 
@@ -2788,6 +2790,7 @@ function Reports({data,setData}){
   const monthLabels=months6.map(d=>["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()]);
 
   const [openCat,setOpenCat]=useState(null); // expandable expense category
+  const [openInc,setOpenInc]=useState(null); // expandable income source
 
   return(
     <div className="slide-in" style={{paddingBottom:100}}>
@@ -2965,18 +2968,37 @@ function Reports({data,setData}){
             })}
           </Card>
           <Card>
-            <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>Income Sources</div>
-            {Object.entries(catInc).map(([cat,amt])=>(
-              <div key={cat} style={{marginBottom:11}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                  <span style={{fontSize:12,color:"rgba(255,255,255,.62)"}}>{cat}</span>
-                  <span className="mono" style={{fontSize:12,color:"#00f0dc"}}>{fmtK(amt)}</span>
+            <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>Income Sources {hasFilters&&<span style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>· filtered</span>}</div>
+            {Object.entries(catInc).length===0?<div style={{textAlign:"center",padding:"16px 0",color:"rgba(255,255,255,.22)",fontSize:13}}>No income in this range</div>:Object.entries(catInc).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>{
+              const open=openInc===cat;
+              const rows=filtered.filter(t=>t.type==="income"&&t.cat===cat).sort((a,b)=>b.date.localeCompare(a.date));
+              return(
+                <div key={cat} style={{marginBottom:11}}>
+                  <div onClick={()=>setOpenInc(o=>o===cat?null:cat)} style={{cursor:"pointer"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                      <span style={{fontSize:12,color:"rgba(255,255,255,.62)"}}>{open?"▾ ":"▸ "}{cat}</span>
+                      <span className="mono" style={{fontSize:12,color:"#00f0dc"}}>{fmtK(amt)}</span>
+                    </div>
+                    <div style={{height:4,background:"rgba(255,255,255,.06)",borderRadius:4,overflow:"hidden"}}>
+                      <div style={{width:`${Math.round(amt/totalIncT*100)}%`,height:"100%",background:"#00f0dc",borderRadius:4,opacity:.7}}/>
+                    </div>
+                  </div>
+                  {open&&(
+                    <div style={{marginTop:8,marginLeft:6,paddingLeft:10,borderLeft:"2px solid rgba(0,240,220,.25)"}}>
+                      {rows.map((t,i)=>(
+                        <div key={t.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0"}}>
+                          <div style={{minWidth:0,flex:1}}>
+                            <div style={{fontSize:12,color:"rgba(255,255,255,.78)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.label||cat}</div>
+                            <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{fmtDate(t.date)}{t.amountUSD?` · $${t.amountUSD}`:""}{t.note?` · ${t.note}`:""}</div>
+                          </div>
+                          <span className="mono" style={{fontSize:12,color:"#00f0dc",marginLeft:8,flexShrink:0}}>{fmtK(t.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div style={{height:4,background:"rgba(255,255,255,.06)",borderRadius:4,overflow:"hidden"}}>
-                  <div style={{width:`${Math.round(amt/totalIncT*100)}%`,height:"100%",background:"#00f0dc",borderRadius:4,opacity:.7}}/>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </Card>
         </div>
       )}
