@@ -8,18 +8,35 @@
 <meta name="apple-mobile-web-app-title" content="AS Tracker"/>
 <title>AS Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
 html,body{height:100%;background:#080b12;font-family:'Outfit',sans-serif;color:#e8edf5;overscroll-behavior:none;}
 ::-webkit-scrollbar{display:none;}
 #root{height:100%;}
+#boot-error{display:none;padding:24px;font-family:-apple-system,sans-serif;color:#ff8a9b;font-size:14px;line-height:1.55;white-space:pre-wrap;word-break:break-word;}
+#boot-error b{color:#fff;font-size:16px;display:block;margin-bottom:8px;}
 </style>
 </head>
 <body>
 <div id="root"></div>
+<div id="boot-error"></div>
 <script>
+(function(){
+  function show(msg){var el=document.getElementById('boot-error');if(el){el.style.display='block';el.innerHTML='<b>AS Tracker \u2014 startup problem</b>'+msg.replace(/</g,'&lt;');}}
+  window.__bootErr=show;
+  window.addEventListener('error',function(e){var m=(e&&e.message)?e.message:String(e);if(e&&e.filename){m+='  ['+String(e.filename).split('/').pop()+':'+e.lineno+']';}show('Startup error: '+m);});
+  window.addEventListener('unhandledrejection',function(e){show('Background load error: '+(((e&&e.reason&&e.reason.message))||(e&&e.reason)||'request failed'));});
+})();
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
+<script>
+(function(){
+  if(typeof React==='undefined'||typeof ReactDOM==='undefined'){
+    window.__bootErr('React could not be downloaded. Your WiFi/network is likely blocking cdnjs.cloudflare.com, or the connection dropped mid-load. Try another network (or mobile data), then reload. If it still fails, tell me and I will embed React directly inside the file so nothing needs downloading.');
+    return;
+  }
+  try{
 "use strict";
 const { useState, useRef, useEffect } = React;
 // ─── FIREBASE via REST API (no SDK imports needed — works in artifact sandbox) ─
@@ -481,6 +498,7 @@ const INIT = {
     cards: [],
     recurring: [],
     valuables: [],
+    marketNotes: [],
     bankBalances: [],
     sheet: { headers: ["Item", "Qty", "Amount"], colW: [150, 90, 120], rowH: 44, rows: [
             { id: "r1", cells: ["", "", ""] }, { id: "r2", cells: ["", "", ""] }, { id: "r3", cells: ["", "", ""] },
@@ -513,7 +531,7 @@ const dedupeIds = (data) => {
         });
     };
     const out = { ...data };
-    ["transactions", "stocks", "mfs", "metalSchemes", "loans", "cards", "recurring", "valuables", "bankBalances", "physicalGold", "physicalSilver"].forEach(k => {
+    ["transactions", "stocks", "mfs", "metalSchemes", "loans", "cards", "recurring", "valuables", "marketNotes", "bankBalances", "physicalGold", "physicalSilver"].forEach(k => {
         if (Array.isArray(out[k]))
             out[k] = fixArr(out[k]);
     });
@@ -675,6 +693,9 @@ const FI = ({ label, ...p }) => (React.createElement("div", null,
 const FS = ({ label, options, ...p }) => (React.createElement("div", null,
     React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,.35)", marginBottom: 3, fontWeight: 600, letterSpacing: ".07em", textTransform: "uppercase" } }, label),
     React.createElement("select", { style: { ...iS, appearance: "none" }, ...p }, options.map(o => React.createElement("option", { key: typeof o === "string" ? o : o.v, value: typeof o === "string" ? o : o.v }, typeof o === "string" ? o : o.l)))));
+const FT = ({ label, ...p }) => (React.createElement("div", null,
+    React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,.35)", marginBottom: 3, fontWeight: 600, letterSpacing: ".07em", textTransform: "uppercase" } }, label),
+    React.createElement("textarea", { style: { ...iS, minHeight: 64, resize: "vertical", fontFamily: "Outfit", lineHeight: 1.5 }, ...p })));
 const Btn = ({ children, col = "#00f0dc", tc = "#000", ...p }) => (React.createElement("button", { style: { width: "100%", padding: "13px", background: `linear-gradient(135deg,${col},${col}cc)`, border: "none", borderRadius: 13, fontSize: 15, fontWeight: 700, color: tc, marginTop: 6 }, ...p }, children));
 // Reusable bill upload / view / remove field. Stores each bill as its own cloud document.
 function BillField({ billId, onUploaded, onRemoved }) {
@@ -1150,11 +1171,15 @@ function CashFlow({ data, setData }) {
 // ══════════════════════════════════════════════════════════════════════════════
 function Investments({ data, setData }) {
     var _a;
-    const { stocks, mfs, metalSchemes, physicalGold, physicalSilver, prices, valuables = [] } = data;
+    const { stocks, mfs, metalSchemes, physicalGold, physicalSilver, prices, valuables = [], marketNotes = [] } = data;
     const [tab, setTab] = useState("stocks");
     const [showVal, setShowVal] = useState(false);
     const [editVal, setEditVal] = useState(null);
     const [valF, setValF] = useState({ name: "", category: "Electronics", value: "", date: today(), billId: "" });
+    const [showNote, setShowNote] = useState(false);
+    const [editNote, setEditNote] = useState(null);
+    const [noteF, setNoteF] = useState({ stock: "", target: "", note: "", status: "Watching", date: today() });
+    const [noteFilter, setNoteFilter] = useState("All"); // All | Watching | Bought | Skip
     const [showAdd, setShowAdd] = useState(false);
     const [showScheme, setShowScheme] = useState(null);
     const [showNav, setShowNav] = useState(false);
@@ -1352,7 +1377,22 @@ function Investments({ data, setData }) {
                 deleteBill(v.billId);
             setData(d => ({ ...d, valuables: (d.valuables || []).filter(x => x.id !== id) }));
         }
+        else if (type === "marketNote")
+            setData(d => ({ ...d, marketNotes: (d.marketNotes || []).filter(x => x.id !== id) }));
         setConfirmDel(null);
+    }
+    function addNote() {
+        if (!noteF.stock.trim() && !noteF.note.trim())
+            return;
+        setData(d => ({ ...d, marketNotes: [{ id: uid(), stock: noteF.stock.trim(), target: noteF.target.trim(), note: noteF.note.trim(), status: noteF.status, date: noteF.date }, ...(d.marketNotes || [])] }));
+        setShowNote(false);
+        setNoteF({ stock: "", target: "", note: "", status: "Watching", date: today() });
+    }
+    function saveEditNote() {
+        if (!editNote.stock.trim() && !editNote.note.trim())
+            return;
+        setData(d => ({ ...d, marketNotes: (d.marketNotes || []).map(n => n.id === editNote.id ? { ...n, stock: editNote.stock.trim(), target: editNote.target.trim(), note: editNote.note.trim(), status: editNote.status, date: editNote.date } : n) }));
+        setEditNote(null);
     }
     function addValuable() {
         if (!valF.name || !valF.value)
@@ -1574,7 +1614,7 @@ function Investments({ data, setData }) {
                 React.createElement(Card, { style: { padding: "12px 14px", background: tab === "metals" ? "rgba(255,213,0,.04)" : "rgba(79,195,247,.05)", border: tab === "metals" ? "1px solid rgba(255,213,0,.12)" : "1px solid rgba(79,195,247,.14)" } },
                     React.createElement("div", { style: { fontSize: 10, color: card3.color, opacity: .7 } }, card3.label),
                     React.createElement("div", { className: "mono", style: { fontSize: 18, fontWeight: 700, color: card3.color } }, card3.value))),
-            React.createElement("div", { style: { display: "flex", gap: 7, padding: "12px 16px 0" } }, [["stocks", "📈 Stocks"], ["mf", "🏦 Funds"], ["metals", "🥇 Metals"], ["valuables", "💎 Assets"]].map(([id, lbl]) => (React.createElement("button", { key: id, onClick: () => setTab(id), style: { flex: 1, padding: "8px 4px", borderRadius: 11, border: "none", background: tab === id ? "rgba(0,240,220,.12)" : "rgba(255,255,255,.05)", color: tab === id ? "#00f0dc" : "rgba(255,255,255,.38)", fontSize: 11, fontWeight: 700, borderBottom: tab === id ? "2px solid #00f0dc" : "2px solid transparent" } }, lbl))))),
+            React.createElement("div", { style: { display: "flex", gap: 7, padding: "12px 16px 0" } }, [["stocks", "📈 Stocks"], ["mf", "🏦 Funds"], ["metals", "🥇 Metals"], ["valuables", "💎 Assets"], ["notes", "📝 Notes"]].map(([id, lbl]) => (React.createElement("button", { key: id, onClick: () => setTab(id), style: { flex: 1, padding: "8px 4px", borderRadius: 11, border: "none", background: tab === id ? "rgba(0,240,220,.12)" : "rgba(255,255,255,.05)", color: tab === id ? "#00f0dc" : "rgba(255,255,255,.38)", fontSize: 11, fontWeight: 700, borderBottom: tab === id ? "2px solid #00f0dc" : "2px solid transparent" } }, lbl))))),
         React.createElement("div", { style: { padding: "12px 16px 0" } },
             (tab === "stocks" || tab === "mf") && (React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 12 } },
                 React.createElement("input", { value: query, onChange: e => setQuery(e.target.value), placeholder: tab === "stocks" ? "🔍 Search stock…" : "🔍 Search fund…", style: { flex: 1, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "9px 12px", color: "#fff", fontSize: 13, fontFamily: "Outfit", outline: "none" } }),
@@ -1726,7 +1766,64 @@ function Investments({ data, setData }) {
                             React.createElement("div", { className: "mono", style: { fontSize: 15, fontWeight: 700, color: "#ff9f43" } }, fmtK(v.value))),
                         open && (React.createElement("div", { onClick: e => e.stopPropagation() },
                             React.createElement(ActionBar, { onEdit: () => setEditVal({ ...v, value: String(v.value) }), onDelete: () => setConfirmDel({ type: "valuable", id: v.id, label: v.name, amount: v.value }) })))));
-                })))),
+                }))),
+            tab === "notes" && (React.createElement(React.Fragment, null,
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 } },
+                    React.createElement("div", null,
+                        React.createElement("div", { style: { fontSize: 13, fontWeight: 700 } }, "Market Notes"),
+                        React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,.3)" } }, "What to buy & when \u2014 your watch ideas")),
+                    React.createElement("button", { onClick: () => { setNoteF({ stock: "", target: "", note: "", status: "Watching", date: today() }); setShowNote(true); }, style: { padding: "7px 13px", borderRadius: 10, background: "rgba(0,240,220,.12)", border: "1px solid rgba(0,240,220,.3)", color: "#00f0dc", fontSize: 12, fontWeight: 700 } }, "+ Add")),
+                React.createElement("div", { style: { display: "flex", gap: 7, marginBottom: 12 } }, ["All", "Watching", "Bought", "Skip"].map(s => (React.createElement("button", { key: s, onClick: () => setNoteFilter(s), style: { flex: 1, padding: "7px 4px", borderRadius: 9, border: "none", background: noteFilter === s ? "rgba(0,240,220,.14)" : "rgba(255,255,255,.05)", color: noteFilter === s ? "#00f0dc" : "rgba(255,255,255,.4)", fontSize: 11, fontWeight: 700 } }, s)))),
+                (() => {
+                    const notes = (marketNotes || []).filter(n => noteFilter === "All" || n.status === noteFilter);
+                    if ((marketNotes || []).length === 0)
+                        return React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,.3)", padding: "4px 2px", lineHeight: 1.6 } },
+                            "No notes yet. Tap + Add to jot an idea \u2014 e.g. stock ",
+                            React.createElement("b", { style: { color: "#fff" } }, "TATAPOWER"),
+                            ", target ",
+                            React.createElement("b", { style: { color: "#fff" } }, "Below \u20B9380"),
+                            ", note ",
+                            React.createElement("b", { style: { color: "#fff" } }, "add on dips, long term"),
+                            ".");
+                    if (notes.length === 0)
+                        return React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,.3)", padding: "4px 2px" } },
+                            "No \"",
+                            noteFilter,
+                            "\" notes.");
+                    return notes.map(n => {
+                        const open = openCard === ("note-" + n.id);
+                        const sc = { Watching: "#00f0dc", Bought: "#00c878", Skip: "#8892a6" }[n.status] || "#00f0dc";
+                        return (React.createElement("div", { key: n.id, className: "fade-up", onClick: () => tapToggle("note-" + n.id), style: { background: "rgba(255,255,255,.03)", border: "1px solid " + (open ? "rgba(0,240,220,.3)" : "rgba(255,255,255,.07)"), borderRadius: 15, padding: "13px", marginBottom: 10, cursor: "pointer" } },
+                            React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 11 } },
+                                React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+                                    React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: n.target ? 4 : 0 } },
+                                        React.createElement("span", { style: { fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, n.stock || "(note)"),
+                                        React.createElement("span", { style: { fontSize: 9, fontWeight: 700, color: sc, background: sc + "22", padding: "2px 7px", borderRadius: 20, flexShrink: 0 } }, n.status)),
+                                    n.target && React.createElement("div", { style: { fontSize: 12, color: "#ffd700", fontWeight: 600 } },
+                                        "\uD83C\uDFAF ",
+                                        n.target)),
+                                React.createElement("div", { style: { fontSize: 9, color: "rgba(255,255,255,.3)", flexShrink: 0, marginTop: 2 } }, fmtDate(n.date))),
+                            n.note && React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,.62)", marginTop: 8, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, n.note),
+                            open && (React.createElement("div", { onClick: e => e.stopPropagation() },
+                                React.createElement(ActionBar, { onEdit: () => setEditNote({ ...n }), onDelete: () => setConfirmDel({ type: "marketNote", id: n.id, label: n.stock || "this note" }) })))));
+                    });
+                })()))),
+        showNote && (React.createElement(Modal, { title: "\uD83D\uDCDD New Market Note", onClose: () => setShowNote(false) },
+            React.createElement(FI, { label: "Stock / Sector (which)", value: noteF.stock, onChange: e => setNoteF(f => ({ ...f, stock: e.target.value })), placeholder: "TATAPOWER / IT sector" }),
+            React.createElement(FI, { label: "Target / Trigger (when)", value: noteF.target, onChange: e => setNoteF(f => ({ ...f, target: e.target.value })), placeholder: "Below \u20B9380 / after Q3 results" }),
+            React.createElement(FT, { label: "Note", value: noteF.note, onChange: e => setNoteF(f => ({ ...f, note: e.target.value })), placeholder: "Why \u2014 e.g. add on dips, long term hold" }),
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+                React.createElement(FS, { label: "Status", value: noteF.status, onChange: e => setNoteF(f => ({ ...f, status: e.target.value })), options: ["Watching", "Bought", "Skip"] }),
+                React.createElement(FI, { label: "Date", type: "date", value: noteF.date, onChange: e => setNoteF(f => ({ ...f, date: e.target.value })) })),
+            React.createElement(Btn, { onClick: addNote, col: "#00f0dc", tc: "#000" }, "Save Note"))),
+        editNote && (React.createElement(Modal, { title: "\u270F\uFE0F Edit Market Note", onClose: () => setEditNote(null) },
+            React.createElement(FI, { label: "Stock / Sector (which)", value: editNote.stock, onChange: e => setEditNote(f => ({ ...f, stock: e.target.value })), placeholder: "TATAPOWER / IT sector" }),
+            React.createElement(FI, { label: "Target / Trigger (when)", value: editNote.target, onChange: e => setEditNote(f => ({ ...f, target: e.target.value })), placeholder: "Below \u20B9380 / after Q3 results" }),
+            React.createElement(FT, { label: "Note", value: editNote.note, onChange: e => setEditNote(f => ({ ...f, note: e.target.value })), placeholder: "Why \u2014 e.g. add on dips, long term hold" }),
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+                React.createElement(FS, { label: "Status", value: editNote.status, onChange: e => setEditNote(f => ({ ...f, status: e.target.value })), options: ["Watching", "Bought", "Skip"] }),
+                React.createElement(FI, { label: "Date", type: "date", value: editNote.date, onChange: e => setEditNote(f => ({ ...f, date: e.target.value })) })),
+            React.createElement(Btn, { onClick: saveEditNote, col: "#00f0dc", tc: "#000" }, "Save Changes"))),
         showVal && (React.createElement(Modal, { title: "\uD83D\uDC8E Add Valuable / Asset", onClose: () => setShowVal(false) },
             React.createElement(FI, { label: "Item Name", value: valF.name, onChange: e => setValF(f => ({ ...f, name: e.target.value })), placeholder: "iPhone 16 Pro / LG Fridge" }),
             React.createElement(FS, { label: "Category", value: valF.category, onChange: e => setValF(f => ({ ...f, category: e.target.value })), options: ["Electronics", "Appliance", "Vehicle", "Jewellery", "Furniture", "Other"] }),
@@ -3290,6 +3387,10 @@ function App() {
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
 
+  }catch(err){
+    window.__bootErr('The app code crashed on startup:\n\n'+((err&&err.message)||err)+(err&&err.stack?('\n\n'+String(err.stack).split('\n').slice(0,5).join('\n')):''));
+  }
+})();
 </script>
 </body>
 </html>
