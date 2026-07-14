@@ -499,6 +499,7 @@ const INIT = {
     recurring: [],
     valuables: [],
     marketNotes: [],
+    diary: [],
     bankBalances: [],
     sheet: { headers: ["Item", "Qty", "Amount"], colW: [150, 90, 120], rowH: 44, rows: [
             { id: "r1", cells: ["", "", ""] }, { id: "r2", cells: ["", "", ""] }, { id: "r3", cells: ["", "", ""] },
@@ -531,7 +532,7 @@ const dedupeIds = (data) => {
         });
     };
     const out = { ...data };
-    ["transactions", "stocks", "mfs", "metalSchemes", "loans", "cards", "recurring", "valuables", "marketNotes", "bankBalances", "physicalGold", "physicalSilver"].forEach(k => {
+    ["transactions", "stocks", "mfs", "metalSchemes", "loans", "cards", "recurring", "valuables", "marketNotes", "diary", "bankBalances", "physicalGold", "physicalSilver"].forEach(k => {
         if (Array.isArray(out[k]))
             out[k] = fixArr(out[k]);
     });
@@ -777,6 +778,7 @@ function Dashboard({ data, setData, nav }) {
     const { transactions, stocks, mfs, metalSchemes, loans, cards, bankBalances, profile, prices, physicalGold, physicalSilver, valuables } = data;
     const [showAdd, setShowAdd] = useState(false);
     const [showBank, setShowBank] = useState(false);
+    const [showDiary, setShowDiary] = useState(false);
     const [openSection, setOpenSection] = useState(null); // "payments" | "banks" — accordion, only one open
     const [txF, setTxF] = useState({ type: "income", cat: "T Gifts", label: "", amountUSD: "", amount: "", date: today(), note: "" });
     const [bankF, setBankF] = useState({ bank: "", isNew: false, newName: "", balance: "" });
@@ -855,7 +857,9 @@ function Dashboard({ data, setData, nav }) {
                         ","),
                     React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: "#00f0dc" } }, dayName),
                     React.createElement("span", { style: { fontSize: 14 } }, "\uD83D\uDCC5"))),
-            React.createElement("div", { onClick: () => nav("profile"), style: { width: 44, height: 44, borderRadius: "50%", background: "linear-gradient(135deg,#00f0dc,#7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, cursor: "pointer", border: "2.5px solid rgba(0,240,220,.3)", flexShrink: 0, overflow: "hidden" } }, profile.avatar ? React.createElement("img", { src: profile.avatar, alt: "", style: { width: "100%", height: "100%", objectFit: "cover" } }) : "👤")),
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 9, flexShrink: 0 } },
+                React.createElement("button", { onClick: () => setShowDiary(true), title: "Daily Diary", style: { width: 44, height: 44, borderRadius: 14, background: "rgba(0,240,220,.1)", border: "1px solid rgba(0,240,220,.28)", color: "#00f0dc", fontSize: 19, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 } }, "\uD83D\uDCC5"),
+                React.createElement("div", { onClick: () => nav("profile"), style: { width: 44, height: 44, borderRadius: "50%", background: "linear-gradient(135deg,#00f0dc,#7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, cursor: "pointer", border: "2.5px solid rgba(0,240,220,.3)", flexShrink: 0, overflow: "hidden" } }, profile.avatar ? React.createElement("img", { src: profile.avatar, alt: "", style: { width: "100%", height: "100%", objectFit: "cover" } }) : "👤"))),
         React.createElement("div", { onClick: () => nav("reports"), style: { margin: "16px 16px 0", background: "linear-gradient(135deg,#00f0dc,#00b8d9)", borderRadius: 22, padding: "20px 22px", position: "relative", overflow: "hidden", cursor: "pointer" }, className: "glow-cyan" },
             React.createElement("div", { style: { position: "absolute", right: -24, top: -24, width: 100, height: 100, borderRadius: "50%", background: "rgba(255,255,255,.1)" } }),
             React.createElement("div", { style: { fontSize: 11, color: "rgba(0,0,0,.5)", fontWeight: 700, letterSpacing: ".1em" } }, "NET WORTH"),
@@ -947,7 +951,8 @@ function Dashboard({ data, setData, nav }) {
                     else
                         setBankF(f => ({ ...f, bank: e.target.value })); }, options: [{ v: "", l: "— Choose —" }, ...bankBalances.map(b => ({ v: b.bank, l: b.bank })), { v: "__new__", l: "+ Add New Account" }] }))) : (React.createElement(FI, { label: "New Bank / Wallet Name", value: bankF.newName, onChange: e => setBankF(f => ({ ...f, newName: e.target.value })), placeholder: "e.g. Kotak Savings" })),
             React.createElement(FI, { label: "Current Balance (\u20B9)", type: "number", value: bankF.balance, onChange: e => setBankF(f => ({ ...f, balance: e.target.value })), placeholder: "0" }),
-            React.createElement(Btn, { onClick: saveBank }, "Save Balance")))));
+            React.createElement(Btn, { onClick: saveBank }, "Save Balance"))),
+        showDiary && React.createElement(DiaryCalendar, { data: data, setData: setData, onClose: () => setShowDiary(false) })));
 }
 // ══════════════════════════════════════════════════════════════════════════════
 // CASH FLOW — search + date range
@@ -2480,6 +2485,121 @@ function EMIDebt({ data, setData }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // REPORTS
 // ══════════════════════════════════════════════════════════════════════════════
+function DiaryCalendar({ data, setData, onClose }) {
+    const entries = data.diary || [];
+    const pad = (n) => (n < 10 ? "0" : "") + n;
+    const key = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
+    const todayKey = today();
+    const tParts = todayKey.split("-");
+    const [cy, setCy] = useState(Number(tParts[0]));
+    const [cm, setCm] = useState(Number(tParts[1]) - 1); // 0-11
+    const [sel, setSel] = useState(todayKey);
+    const [draft, setDraft] = useState("");
+    const [saved, setSaved] = useState(false);
+    useEffect(() => { const o = document.body.style.overflow; document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = o; }; }, []);
+    const entryFor = (k) => entries.find(e => e.date === k);
+    // load the selected day's text into the editor whenever the day changes
+    useEffect(() => { const e = entryFor(sel); setDraft(e ? e.text : ""); setSaved(false); }, [sel]);
+    function writeDay(k, text) {
+        setData(d => {
+            const list = d.diary || [];
+            const has = list.some(e => e.date === k);
+            if (!text.trim())
+                return { ...d, diary: list.filter(e => e.date !== k) }; // empty = remove
+            if (has)
+                return { ...d, diary: list.map(e => e.date === k ? { ...e, text: text } : e) };
+            return { ...d, diary: [...list, { id: uid(), date: k, text: text }] };
+        });
+    }
+    function saveDay() { writeDay(sel, draft); setSaved(true); setTimeout(() => setSaved(false), 1600); }
+    function pickDay(k) { if (k === sel)
+        return; if (draft !== ((entryFor(sel) || {}).text || ""))
+        writeDay(sel, draft); setSel(k); }
+    const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const firstDow = new Date(cy, cm, 1).getDay(); // 0=Sun
+    const daysInMonth = new Date(cy, cm + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < firstDow; i++)
+        cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++)
+        cells.push(d);
+    function shift(n) {
+        let m = cm + n, y = cy;
+        if (m < 0) {
+            m = 11;
+            y--;
+        }
+        if (m > 11) {
+            m = 0;
+            y++;
+        }
+        setCm(m);
+        setCy(y);
+    }
+    function goToday() { setCy(Number(tParts[0])); setCm(Number(tParts[1]) - 1); setSel(todayKey); }
+    const monthCount = entries.filter(e => e.date.slice(0, 7) === `${cy}-${pad(cm + 1)}`).length;
+    const selPretty = (() => { const p = sel.split("-"); return `${Number(p[2])} ${MONTHS[Number(p[1]) - 1].slice(0, 3)} ${p[0]}`; })();
+    const dirty = draft !== ((entryFor(sel) || {}).text || "");
+    const ui = (React.createElement("div", { style: { position: "fixed", inset: 0, background: "#080b12", zIndex: 1200, display: "flex", flexDirection: "column" } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 16px 11px", borderBottom: "1px solid rgba(255,255,255,.08)" } },
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+                React.createElement("button", { onClick: () => { if (dirty)
+                        writeDay(sel, draft); onClose(); }, style: { width: 34, height: 34, borderRadius: 10, background: "rgba(255,255,255,.07)", border: "none", color: "#fff", fontSize: 20, lineHeight: 1 } }, "\u2039"),
+                React.createElement("div", null,
+                    React.createElement("div", { style: { fontSize: 18, fontWeight: 800 } }, "Daily Diary"),
+                    React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,.35)" } }, "Day briefing \u00B7 saved to cloud"))),
+            React.createElement("button", { onClick: goToday, style: { padding: "8px 12px", borderRadius: 9, background: "rgba(0,240,220,.12)", border: "1px solid rgba(0,240,220,.3)", color: "#00f0dc", fontSize: 12, fontWeight: 700 } }, "Today")),
+        React.createElement("div", { style: { flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "14px 16px 30px", maxWidth: 430, width: "100%", margin: "0 auto" } },
+            React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 } },
+                React.createElement("button", { onClick: () => shift(-1), style: { width: 36, height: 36, borderRadius: 11, background: "rgba(255,255,255,.06)", border: "none", color: "#fff", fontSize: 19, lineHeight: 1 } }, "\u2039"),
+                React.createElement("div", { style: { textAlign: "center" } },
+                    React.createElement("div", { style: { fontSize: 16, fontWeight: 800 } },
+                        MONTHS[cm],
+                        " ",
+                        cy),
+                    React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,.35)" } },
+                        monthCount,
+                        " ",
+                        monthCount === 1 ? "entry" : "entries")),
+                React.createElement("button", { onClick: () => shift(1), style: { width: 36, height: 36, borderRadius: 11, background: "rgba(255,255,255,.06)", border: "none", color: "#fff", fontSize: 19, lineHeight: 1 } }, "\u203A")),
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 5, marginBottom: 5 } }, ["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (React.createElement("div", { key: i, style: { textAlign: "center", fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,.3)", padding: "2px 0" } }, d)))),
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 5 } }, cells.map((d, i) => {
+                if (d === null)
+                    return React.createElement("div", { key: "e" + i });
+                const k = key(cy, cm, d);
+                const has = !!entryFor(k);
+                const isSel = k === sel;
+                const isToday = k === todayKey;
+                return (React.createElement("button", { key: k, onClick: () => pickDay(k), style: {
+                        aspectRatio: "1", borderRadius: 11, position: "relative",
+                        background: isSel ? "rgba(0,240,220,.18)" : (has ? "rgba(0,240,220,.06)" : "rgba(255,255,255,.035)"),
+                        border: isSel ? "1.5px solid #00f0dc" : (isToday ? "1.5px solid rgba(255,213,0,.55)" : "1px solid rgba(255,255,255,.06)"),
+                        color: isSel ? "#00f0dc" : (isToday ? "#ffd700" : "rgba(255,255,255,.75)"),
+                        fontSize: 13, fontWeight: isSel || isToday ? 800 : 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 0
+                    } },
+                    d,
+                    has && React.createElement("span", { style: { position: "absolute", bottom: 5, left: "50%", transform: "translateX(-50%)", width: 4, height: 4, borderRadius: "50%", background: isSel ? "#00f0dc" : "#00f0dc", opacity: isSel ? 1 : .7 } })));
+            })),
+            React.createElement("div", { style: { marginTop: 18, background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 16, padding: 14 } },
+                React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 } },
+                    React.createElement("div", null,
+                        React.createElement("div", { style: { fontSize: 14, fontWeight: 800 } },
+                            selPretty,
+                            sel === todayKey ? " · Today" : ""),
+                        React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,.32)" } }, "What happened today \u2014 work, live, gifts\u2026")),
+                    saved && React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: "#00c878" } }, "\u2713 Saved"),
+                    !saved && dirty && React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: "#ffd700" } }, "\u25CF Unsaved")),
+                React.createElement("textarea", { value: draft, onChange: e => { setDraft(e.target.value); setSaved(false); }, placeholder: "e.g. Did live today, got ₹4,500 gifts.\nFinished pending office work.\nBought groceries.", style: { width: "100%", minHeight: 150, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "11px 12px", color: "#fff", fontSize: 13, fontFamily: "Outfit", lineHeight: 1.6, outline: "none", resize: "vertical" } }),
+                React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } },
+                    React.createElement("button", { onClick: saveDay, style: { flex: 1, padding: "12px", borderRadius: 12, background: "linear-gradient(135deg,#00f0dc,#00b8d9)", border: "none", color: "#000", fontSize: 14, fontWeight: 700 } }, "Save Entry"),
+                    entryFor(sel) && React.createElement("button", { onClick: () => { writeDay(sel, ""); setDraft(""); }, style: { padding: "12px 15px", borderRadius: 12, background: "rgba(255,83,112,.1)", border: "1px solid rgba(255,83,112,.25)", color: "#ff5370", fontSize: 13, fontWeight: 700 } }, "Delete"))),
+            monthCount > 0 && (React.createElement("div", { style: { marginTop: 18 } },
+                React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,.5)", marginBottom: 9, letterSpacing: ".05em", textTransform: "uppercase" } }, "This Month"),
+                entries.filter(e => e.date.slice(0, 7) === `${cy}-${pad(cm + 1)}`).sort((a, b) => b.date.localeCompare(a.date)).map(e => (React.createElement("div", { key: e.id, onClick: () => pickDay(e.date), style: { background: "rgba(255,255,255,.03)", border: "1px solid " + (e.date === sel ? "rgba(0,240,220,.3)" : "rgba(255,255,255,.07)"), borderRadius: 13, padding: "11px 13px", marginBottom: 8, cursor: "pointer" } },
+                    React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: "#00f0dc", marginBottom: 3 } }, fmtDate(e.date)),
+                    React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,.6)", lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } }, e.text)))))))));
+    return (typeof ReactDOM !== "undefined" && ReactDOM.createPortal) ? ReactDOM.createPortal(ui, document.body) : ui;
+}
 function DataSheet({ data, setData, onClose }) {
     const DEF = { headers: ["Item", "Qty", "Amount"], rows: [] };
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
