@@ -33,7 +33,7 @@ html,body{height:100%;background:#080b12;font-family:'Outfit',sans-serif;color:#
 <script>
 (function(){
   if(typeof React==='undefined'||typeof ReactDOM==='undefined'){
-    window.__bootErr('React could not be downloaded. Your WiFi/network is likely blocking cdnjs.cloudflare.com, or the connection dropped mid-load. Try another network (or mobile data), then reload. If it still fails, tell me and I will embed React directly inside the file so nothing needs downloading.');
+    window.__bootErr('React could not be downloaded. Your WiFi/network is likely blocking cdnjs.cloudflare.com, or the connection dropped mid-load. Try another network (or mobile data), then reload.');
     return;
   }
   try{
@@ -172,7 +172,7 @@ button{cursor:pointer;font-family:'Outfit',sans-serif;}
 `;
 const USD_CATS = ["T Gifts", "C Gifts"];
 const INCOME_CATS = ["T Gifts", "T Cash", "C Gifts", "C Cash", "Other Income"];
-const EXPENSE_CATS = ["Rent", "House Maintenance", "Utilities", "Groceries", "Pet Maintenance", "Transport & Travel", "Dining Out", "Online Food Order", "Health", "Entertainment", "Shopping", "Education", "Other"];
+const EXPENSE_CATS = ["Rent", "House Maintenance", "Utilities", "Groceries", "Pet Maintenance", "Beauty Maintenance", "Transport & Travel", "Dining Out", "Online Food Order", "Outside Food", "Health", "Entertainment", "Shopping", "Education", "Other"];
 // Guess an expense category from a merchant/description string
 const guessCat = (mRaw) => {
     const m = (mRaw || "").toLowerCase();
