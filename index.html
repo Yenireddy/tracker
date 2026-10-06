@@ -501,6 +501,7 @@ const INIT = {
     marketNotes: [],
     diary: [],
     customExpenseCats: [],
+    chits: [],
     bankBalances: [],
     sheet: { headers: ["Item", "Qty", "Amount"], colW: [150, 90, 120], rowH: 44, rows: [
             { id: "r1", cells: ["", "", ""] }, { id: "r2", cells: ["", "", ""] }, { id: "r3", cells: ["", "", ""] },
@@ -533,7 +534,7 @@ const dedupeIds = (data) => {
         });
     };
     const out = { ...data };
-    ["transactions", "stocks", "mfs", "metalSchemes", "loans", "cards", "recurring", "valuables", "marketNotes", "diary", "bankBalances", "physicalGold", "physicalSilver"].forEach(k => {
+    ["transactions", "stocks", "mfs", "metalSchemes", "loans", "cards", "recurring", "valuables", "marketNotes", "diary", "chits", "bankBalances", "physicalGold", "physicalSilver"].forEach(k => {
         if (Array.isArray(out[k]))
             out[k] = fixArr(out[k]);
     });
@@ -588,6 +589,24 @@ function processBillFile(file) {
 }
 const today = () => new Date().toISOString().split("T")[0];
 const fmtDate = (d) => new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit" });
+// Chit fund helpers: parse "5000, 5200, 5400" / one-per-line amounts, and add N months to a YYYY-MM-DD date (day clamped to month end)
+const parseAmts = (s) => {
+    const out = [];
+    String(s || "").replace(/₹/g, "").split(/[\s;]+/).filter(Boolean).forEach(tok => {
+        if (/^\d{1,3}(,\d{2,3})+(\.\d+)?$/.test(tok))
+            out.push(Number(tok.replace(/,/g, ""))); // 5,400 or 1,00,000 = one number
+        else
+            tok.split(",").filter(Boolean).forEach(p => out.push(Number(p))); // 5000,5200 = two numbers
+    });
+    return out.filter(n => !isNaN(n) && n >= 0);
+};
+const addMonthsStr = (ds, n) => {
+    const p = String(ds).split("-");
+    const y = Number(p[0]), m = Number(p[1]) - 1, d = Number(p[2]);
+    const t = new Date(y, m + n, 1);
+    const last = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate();
+    return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(Math.min(d, last)).padStart(2, "0");
+};
 // Midnight today
 const _midnight = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
 // Next occurrence of a monthly due-day (1-31), as a Date at midnight
@@ -1179,7 +1198,7 @@ function CashFlow({ data, setData }) {
 // ══════════════════════════════════════════════════════════════════════════════
 function Investments({ data, setData }) {
     var _a;
-    const { stocks, mfs, metalSchemes, physicalGold, physicalSilver, prices, valuables = [], marketNotes = [] } = data;
+    const { stocks, mfs, metalSchemes, physicalGold, physicalSilver, prices, valuables = [], marketNotes = [], chits = [] } = data;
     const [tab, setTab] = useState("stocks");
     const [showVal, setShowVal] = useState(false);
     const [editVal, setEditVal] = useState(null);
@@ -1188,6 +1207,9 @@ function Investments({ data, setData }) {
     const [editNote, setEditNote] = useState(null);
     const [noteF, setNoteF] = useState({ stock: "", target: "", note: "", status: "Watching", date: today() });
     const [noteFilter, setNoteFilter] = useState("All"); // All | Watching | Bought | Skip
+    const [showChit, setShowChit] = useState(false);
+    const [editChit, setEditChit] = useState(null);
+    const [chitF, setChitF] = useState({ name: "", start: today(), months: "20", amounts: "" });
     const [showAdd, setShowAdd] = useState(false);
     const [showScheme, setShowScheme] = useState(null);
     const [showNav, setShowNav] = useState(false);
@@ -1387,7 +1409,38 @@ function Investments({ data, setData }) {
         }
         else if (type === "marketNote")
             setData(d => ({ ...d, marketNotes: (d.marketNotes || []).filter(x => x.id !== id) }));
+        else if (type === "chit")
+            setData(d => ({ ...d, chits: (d.chits || []).filter(x => x.id !== id) }));
         setConfirmDel(null);
+    }
+    // ── Chit fund ──
+    function addChit() {
+        const months = Math.max(1, Math.min(120, parseInt(chitF.months) || 0));
+        if (!chitF.name.trim() || !chitF.start)
+            return;
+        const a = parseAmts(chitF.amounts);
+        const inst = [];
+        for (let i = 0; i < months; i++) {
+            const amt = a.length === 1 ? a[0] : (a[i] || 0);
+            inst.push({ amt: amt, paid: false, paidDate: "" });
+        }
+        setData(d => ({ ...d, chits: [{ id: uid(), name: chitF.name.trim(), start: chitF.start, months: months, installments: inst, prizeMonth: 0, prizeAmt: 0, note: "" }, ...(d.chits || [])] }));
+        setShowChit(false);
+        setChitF({ name: "", start: today(), months: "20", amounts: "" });
+    }
+    function saveEditChit() {
+        if (!editChit.name.trim() || !editChit.start)
+            return;
+        setData(d => ({ ...d, chits: (d.chits || []).map(c => c.id === editChit.id ? { ...c, name: editChit.name.trim(), start: editChit.start, prizeMonth: Number(editChit.prizeMonth) || 0, prizeAmt: Number(editChit.prizeAmt) || 0, note: editChit.note || "" } : c) }));
+        setEditChit(null);
+    }
+    function toggleChitPaid(cid, i) {
+        setData(d => ({ ...d, chits: (d.chits || []).map(c => c.id !== cid ? c : { ...c, installments: c.installments.map((x, j) => j !== i ? x : { ...x, paid: !x.paid, paidDate: !x.paid ? today() : "" }) }) }));
+    }
+    function setChitAmt(cid, i, v) {
+        const n = Number(v);
+        const amt = isNaN(n) || n < 0 ? 0 : n;
+        setData(d => ({ ...d, chits: (d.chits || []).map(c => c.id !== cid ? c : { ...c, installments: c.installments.map((x, j) => j !== i ? x : { ...x, amt: amt }) }) }));
     }
     function addNote() {
         if (!noteF.stock.trim() && !noteF.note.trim())
@@ -1622,7 +1675,7 @@ function Investments({ data, setData }) {
                 React.createElement(Card, { style: { padding: "12px 14px", background: tab === "metals" ? "rgba(255,213,0,.04)" : "rgba(79,195,247,.05)", border: tab === "metals" ? "1px solid rgba(255,213,0,.12)" : "1px solid rgba(79,195,247,.14)" } },
                     React.createElement("div", { style: { fontSize: 10, color: card3.color, opacity: .7 } }, card3.label),
                     React.createElement("div", { className: "mono", style: { fontSize: 18, fontWeight: 700, color: card3.color } }, card3.value))),
-            React.createElement("div", { style: { display: "flex", gap: 7, padding: "12px 16px 0" } }, [["stocks", "📈 Stocks"], ["mf", "🏦 Funds"], ["metals", "🥇 Metals"], ["valuables", "💎 Assets"], ["notes", "📝 Notes"]].map(([id, lbl]) => (React.createElement("button", { key: id, onClick: () => setTab(id), style: { flex: 1, padding: "8px 4px", borderRadius: 11, border: "none", background: tab === id ? "rgba(0,240,220,.12)" : "rgba(255,255,255,.05)", color: tab === id ? "#00f0dc" : "rgba(255,255,255,.38)", fontSize: 11, fontWeight: 700, borderBottom: tab === id ? "2px solid #00f0dc" : "2px solid transparent" } }, lbl))))),
+            React.createElement("div", { style: { display: "flex", gap: 7, padding: "12px 16px 0" } }, [["stocks", "📈 Stocks"], ["mf", "🏦 Funds"], ["metals", "🥇 Metals"], ["valuables", "💎 Assets"], ["notes", "📝 Notes"], ["chit", "🤝 Chit"]].map(([id, lbl]) => (React.createElement("button", { key: id, onClick: () => setTab(id), style: { flex: 1, padding: "8px 4px", borderRadius: 11, border: "none", background: tab === id ? "rgba(0,240,220,.12)" : "rgba(255,255,255,.05)", color: tab === id ? "#00f0dc" : "rgba(255,255,255,.38)", fontSize: 11, fontWeight: 700, borderBottom: tab === id ? "2px solid #00f0dc" : "2px solid transparent" } }, lbl))))),
         React.createElement("div", { style: { padding: "12px 16px 0" } },
             (tab === "stocks" || tab === "mf") && (React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 12 } },
                 React.createElement("input", { value: query, onChange: e => setQuery(e.target.value), placeholder: tab === "stocks" ? "🔍 Search stock…" : "🔍 Search fund…", style: { flex: 1, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "9px 12px", color: "#fff", fontSize: 13, fontFamily: "Outfit", outline: "none" } }),
@@ -1815,7 +1868,103 @@ function Investments({ data, setData }) {
                             open && (React.createElement("div", { onClick: e => e.stopPropagation() },
                                 React.createElement(ActionBar, { onEdit: () => setEditNote({ ...n }), onDelete: () => setConfirmDel({ type: "marketNote", id: n.id, label: n.stock || "this note" }) })))));
                     });
-                })()))),
+                })())),
+            tab === "chit" && (React.createElement(React.Fragment, null,
+                (() => {
+                    const tot = chits.reduce((s, c) => s + c.installments.reduce((a, x) => a + (Number(x.amt) || 0), 0), 0);
+                    const paid = chits.reduce((s, c) => s + c.installments.reduce((a, x) => a + (x.paid ? (Number(x.amt) || 0) : 0), 0), 0);
+                    return (React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 } },
+                        React.createElement("div", null,
+                            React.createElement("div", { style: { fontSize: 13, fontWeight: 700 } }, "Chit Funds"),
+                            React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,.3)" } }, chits.length ? `Paid ${fmtK(paid)} · Balance ${fmtK(tot - paid)}` : "Monthly instalments & prize")),
+                        React.createElement("button", { onClick: () => { setChitF({ name: "", start: today(), months: "20", amounts: "" }); setShowChit(true); }, style: { padding: "7px 13px", borderRadius: 10, background: "rgba(0,240,220,.12)", border: "1px solid rgba(0,240,220,.3)", color: "#00f0dc", fontSize: 12, fontWeight: 700 } }, "+ Add")));
+                })(),
+                chits.length === 0 && React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,.3)", padding: "4px 2px", lineHeight: 1.6 } }, "No chit added yet. Tap + Add, enter the chit name, first due date, number of months (20) and the monthly amounts."),
+                chits.map(c => {
+                    const open = openCard === ("chit-" + c.id);
+                    const inst = c.installments || [];
+                    const total = inst.reduce((s, x) => s + (Number(x.amt) || 0), 0);
+                    const paidAmt = inst.reduce((s, x) => s + (x.paid ? (Number(x.amt) || 0) : 0), 0);
+                    const paidCnt = inst.filter(x => x.paid).length;
+                    const nextIdx = inst.findIndex(x => !x.paid);
+                    const nextDue = nextIdx >= 0 ? addMonthsStr(c.start, nextIdx) : "";
+                    const nextLate = nextIdx >= 0 && nextDue < today();
+                    const pct = inst.length ? Math.round(paidCnt / inst.length * 100) : 0;
+                    return (React.createElement("div", { key: c.id, className: "fade-up", onClick: () => tapToggle("chit-" + c.id), style: { background: "rgba(255,255,255,.03)", border: "1px solid " + (open ? "rgba(0,240,220,.3)" : "rgba(255,255,255,.07)"), borderRadius: 15, padding: "13px", marginBottom: 10, cursor: "pointer" } },
+                        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 } },
+                            React.createElement("div", { style: { minWidth: 0, flex: 1 } },
+                                React.createElement("div", { style: { fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
+                                React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,.35)", marginTop: 2 } },
+                                    paidCnt,
+                                    " of ",
+                                    inst.length,
+                                    " months paid \u00B7 starts ",
+                                    fmtDate(c.start))),
+                            React.createElement("div", { style: { textAlign: "right", flexShrink: 0 } },
+                                React.createElement("div", { className: "mono", style: { fontSize: 14, fontWeight: 700, color: "#00f0dc" } }, fmtK(total - paidAmt)),
+                                React.createElement("div", { style: { fontSize: 9, color: "rgba(255,255,255,.3)" } }, "balance to pay"))),
+                        React.createElement("div", { style: { height: 5, background: "rgba(255,255,255,.07)", borderRadius: 5, overflow: "hidden", margin: "10px 0 8px" } },
+                            React.createElement("div", { style: { width: pct + "%", height: "100%", background: "#00f0dc", borderRadius: 5 } })),
+                        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 11 } },
+                            React.createElement("span", { style: { color: "rgba(255,255,255,.45)" } },
+                                "Paid ",
+                                fmtK(paidAmt),
+                                " / ",
+                                fmtK(total)),
+                            nextIdx >= 0
+                                ? React.createElement("span", { style: { color: nextLate ? "#ff5370" : "#ffd700", fontWeight: 600 } },
+                                    "Next: ",
+                                    fmtDate(nextDue),
+                                    " \u00B7 ",
+                                    fmtK(Number(inst[nextIdx].amt) || 0))
+                                : React.createElement("span", { style: { color: "#00c878", fontWeight: 600 } }, "\u2713 All paid")),
+                        Number(c.prizeMonth) > 0 && React.createElement("div", { style: { fontSize: 11, color: "#ffd700", marginTop: 8 } },
+                            "\uD83C\uDF89 Prize taken in month ",
+                            c.prizeMonth,
+                            Number(c.prizeAmt) > 0 ? ` · received ${fmtK(Number(c.prizeAmt))}` : ""),
+                        c.note && React.createElement("div", { style: { fontSize: 11, color: "rgba(255,255,255,.5)", marginTop: 6, whiteSpace: "pre-wrap" } }, c.note),
+                        open && (React.createElement("div", { onClick: e => e.stopPropagation(), style: { marginTop: 12 } },
+                            React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,.32)", marginBottom: 4 } }, "Tap the amount to change it \u00B7 tap Mark paid after you pay each month"),
+                            inst.map((x, i) => {
+                                const due = addMonthsStr(c.start, i);
+                                const late = !x.paid && due < today();
+                                const isPrize = Number(c.prizeMonth) === i + 1;
+                                return (React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderTop: "1px solid rgba(255,255,255,.05)" } },
+                                    React.createElement("div", { className: "mono", style: { width: 24, fontSize: 11, color: "rgba(255,255,255,.3)" } }, i + 1),
+                                    React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+                                        React.createElement("div", { style: { fontSize: 12, color: late ? "#ff5370" : "rgba(255,255,255,.78)" } },
+                                            fmtDate(due),
+                                            isPrize ? " 🎉" : ""),
+                                        React.createElement("div", { style: { fontSize: 9, color: x.paid ? "#00c878" : (late ? "#ff5370" : "rgba(255,255,255,.3)") } }, x.paid ? ("Paid" + (x.paidDate ? " " + fmtDate(x.paidDate) : "")) : (late ? "Overdue" : "Due"))),
+                                    React.createElement("input", { type: "number", inputMode: "decimal", defaultValue: x.amt, key: c.id + "-" + i + "-" + x.amt, onBlur: e => setChitAmt(c.id, i, e.target.value), style: { width: 88, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "7px 8px", color: "#fff", fontSize: 12, fontFamily: "JetBrains Mono", outline: "none", textAlign: "right" } }),
+                                    React.createElement("button", { onClick: () => toggleChitPaid(c.id, i), style: { width: 78, padding: "8px 0", borderRadius: 9, border: "1px solid " + (x.paid ? "rgba(0,200,120,.35)" : "rgba(0,240,220,.3)"), background: x.paid ? "rgba(0,200,120,.12)" : "rgba(0,240,220,.08)", color: x.paid ? "#00c878" : "#00f0dc", fontSize: 11, fontWeight: 700 } }, x.paid ? "✓ Paid" : "Mark paid")));
+                            }),
+                            React.createElement(ActionBar, { onEdit: () => setEditChit({ ...c, prizeMonth: String(c.prizeMonth || ""), prizeAmt: String(c.prizeAmt || "") }), onDelete: () => setConfirmDel({ type: "chit", id: c.id, label: c.name, amount: total }) })))));
+                })))),
+        showChit && (() => {
+            const a = parseAmts(chitF.amounts);
+            const m = Math.max(0, Math.min(120, parseInt(chitF.months) || 0));
+            const sum = a.length === 1 ? a[0] * m : a.slice(0, m).reduce((s, v) => s + v, 0);
+            const info = a.length === 0 ? "Enter amounts below" : (a.length === 1 ? `Same ${fmtK(a[0])} for all ${m} months` : `${a.length} amounts entered${a.length !== m ? ` (need ${m})` : ""}`);
+            return (React.createElement(Modal, { title: "\uD83E\uDD1D New Chit Fund", onClose: () => setShowChit(false) },
+                React.createElement(FI, { label: "Chit name", value: chitF.name, onChange: e => setChitF(f => ({ ...f, name: e.target.value })), placeholder: "e.g. Ramesh Chit 2026" }),
+                React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+                    React.createElement(FI, { label: "First due date", type: "date", value: chitF.start, onChange: e => setChitF(f => ({ ...f, start: e.target.value })) }),
+                    React.createElement(FI, { label: "No. of months", type: "number", value: chitF.months, onChange: e => setChitF(f => ({ ...f, months: e.target.value })), placeholder: "20" })),
+                React.createElement(FT, { label: "Monthly amounts (\u20B9)", value: chitF.amounts, onChange: e => setChitF(f => ({ ...f, amounts: e.target.value })), placeholder: "One amount = same every month\nOr all months in order:\n5000, 5200, 5400, 5600 ..." }),
+                React.createElement("div", { style: { fontSize: 11, color: "rgba(255,255,255,.45)", margin: "2px 0 10px" } },
+                    info,
+                    sum > 0 ? ` · Total ${fmtK(sum)}` : ""),
+                React.createElement(Btn, { onClick: addChit, col: "#00f0dc", tc: "#000" }, "Save Chit")));
+        })(),
+        editChit && (React.createElement(Modal, { title: "\u270F\uFE0F Edit Chit Fund", onClose: () => setEditChit(null) },
+            React.createElement(FI, { label: "Chit name", value: editChit.name, onChange: e => setEditChit(f => ({ ...f, name: e.target.value })) }),
+            React.createElement(FI, { label: "First due date", type: "date", value: editChit.start, onChange: e => setEditChit(f => ({ ...f, start: e.target.value })) }),
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+                React.createElement(FI, { label: "Prize taken in month #", type: "number", value: editChit.prizeMonth, onChange: e => setEditChit(f => ({ ...f, prizeMonth: e.target.value })), placeholder: "blank = not taken" }),
+                React.createElement(FI, { label: "Prize amount received (\u20B9)", type: "number", value: editChit.prizeAmt, onChange: e => setEditChit(f => ({ ...f, prizeAmt: e.target.value })), placeholder: "0" })),
+            React.createElement(FT, { label: "Note", value: editChit.note || "", onChange: e => setEditChit(f => ({ ...f, note: e.target.value })), placeholder: "Organizer, phone, terms\u2026" }),
+            React.createElement(Btn, { onClick: saveEditChit, col: "#00f0dc", tc: "#000" }, "Save Changes"))),
         showNote && (React.createElement(Modal, { title: "\uD83D\uDCDD New Market Note", onClose: () => setShowNote(false) },
             React.createElement(FI, { label: "Stock / Sector (which)", value: noteF.stock, onChange: e => setNoteF(f => ({ ...f, stock: e.target.value })), placeholder: "TATAPOWER / IT sector" }),
             React.createElement(FI, { label: "Target / Trigger (when)", value: noteF.target, onChange: e => setNoteF(f => ({ ...f, target: e.target.value })), placeholder: "Below \u20B9380 / after Q3 results" }),
