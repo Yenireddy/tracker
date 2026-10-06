@@ -613,6 +613,11 @@ const chitSaving = (c, x) => { const f = Number(c.fullAmt) || 0; return f > 0 ? 
 // AFTER you take the prize you are LIABLE for the instalments still unpaid.
 const chitInvested = (chits) => (chits || []).reduce((s, c) => s + (Number(c.prizeMonth) > 0 ? 0 : (c.installments || []).reduce((a, x) => a + (x.paid ? (Number(x.amt) || 0) : 0), 0)), 0);
 const chitOwed = (chits) => (chits || []).reduce((s, c) => s + (Number(c.prizeMonth) > 0 ? (c.installments || []).reduce((a, x) => a + (x.paid ? 0 : (Number(x.amt) || 0)), 0) : 0), 0);
+// Whole chit amount = monthly payment WITHOUT discount x number of months (fixed, e.g. 5000 x 20 = 1,00,000). Falls back to the sum of entered amounts when no chit prize is set.
+const chitWhole = (c) => { const cv = Number(c.chitValue) || 0; if (cv > 0)
+    return cv; const f = Number(c.fullAmt) || 0; const n = (c.installments || []).length; return f > 0 ? f * n : (c.installments || []).reduce((s, x) => s + (Number(x.amt) || 0), 0); };
+// Invested so far = actual amounts of the months marked paid
+const chitPaidAmt = (c) => (c.installments || []).reduce((s, x) => s + (x.paid ? (Number(x.amt) || 0) : 0), 0);
 // Midnight today
 const _midnight = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
 // Next occurrence of a monthly due-day (1-31), as a Date at midnight
@@ -1216,7 +1221,7 @@ function Investments({ data, setData }) {
     const [noteFilter, setNoteFilter] = useState("All"); // All | Watching | Bought | Skip
     const [showChit, setShowChit] = useState(false);
     const [editChit, setEditChit] = useState(null);
-    const [chitF, setChitF] = useState({ name: "", start: today(), months: "20", full: "", amounts: "" });
+    const [chitF, setChitF] = useState({ name: "", start: today(), months: "20", prize: "", amounts: "" });
     const [chitBid, setChitBid] = useState({}); // quick calculator: winner's bid per chit id
     const [showAdd, setShowAdd] = useState(false);
     const [showScheme, setShowScheme] = useState(null);
@@ -1427,19 +1432,20 @@ function Investments({ data, setData }) {
         if (!chitF.name.trim() || !chitF.start)
             return;
         const a = parseAmts(chitF.amounts);
+        const full = Number(chitF.prize) > 0 ? Math.round(Number(chitF.prize) / months * 100) / 100 : 0; // monthly payment without discount = chit prize / months
         const inst = [];
         for (let i = 0; i < months; i++) {
-            const amt = a.length === 1 ? a[0] : (a[i] || 0);
+            const amt = a.length === 1 ? a[0] : (a[i] != null ? a[i] : full); // not entered yet = full payment without discount
             inst.push({ amt: amt, paid: false, paidDate: "" });
         }
-        setData(d => ({ ...d, chits: [{ id: uid(), name: chitF.name.trim(), start: chitF.start, months: months, installments: inst, fullAmt: Number(chitF.full) || 0, prizeMonth: 0, prizeAmt: 0, note: "" }, ...(d.chits || [])] }));
+        setData(d => ({ ...d, chits: [{ id: uid(), name: chitF.name.trim(), start: chitF.start, months: months, installments: inst, chitValue: Number(chitF.prize) || 0, fullAmt: full, prizeMonth: 0, prizeAmt: 0, note: "" }, ...(d.chits || [])] }));
         setShowChit(false);
-        setChitF({ name: "", start: today(), months: "20", full: "", amounts: "" });
+        setChitF({ name: "", start: today(), months: "20", prize: "", amounts: "" });
     }
     function saveEditChit() {
         if (!editChit.name.trim() || !editChit.start)
             return;
-        setData(d => ({ ...d, chits: (d.chits || []).map(c => c.id === editChit.id ? { ...c, name: editChit.name.trim(), start: editChit.start, fullAmt: Number(editChit.fullAmt) || 0, prizeMonth: Number(editChit.prizeMonth) || 0, prizeAmt: Number(editChit.prizeAmt) || 0, note: editChit.note || "" } : c) }));
+        setData(d => ({ ...d, chits: (d.chits || []).map(c => c.id === editChit.id ? { ...c, name: editChit.name.trim(), start: editChit.start, chitValue: Number(editChit.chitValue) || 0, fullAmt: (Number(editChit.chitValue) > 0 ? Math.round(Number(editChit.chitValue) / c.installments.length * 100) / 100 : 0), prizeMonth: Number(editChit.prizeMonth) || 0, prizeAmt: Number(editChit.prizeAmt) || 0, note: editChit.note || "" } : c) }));
         setEditChit(null);
     }
     function toggleChitPaid(cid, i) {
@@ -1885,29 +1891,27 @@ function Investments({ data, setData }) {
                         React.createElement("div", null,
                             React.createElement("div", { style: { fontSize: 13, fontWeight: 700 } }, "Chit Funds"),
                             React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,.3)" } }, chits.length ? `Invested ${fmtK(chitInvested(chits))}${chitOwed(chits) > 0 ? ` · You owe ${fmtK(chitOwed(chits))}` : ""}` : "Monthly instalments & prize")),
-                        React.createElement("button", { onClick: () => { setChitF({ name: "", start: today(), months: "20", full: "", amounts: "" }); setShowChit(true); }, style: { padding: "7px 13px", borderRadius: 10, background: "rgba(0,240,220,.12)", border: "1px solid rgba(0,240,220,.3)", color: "#00f0dc", fontSize: 12, fontWeight: 700 } }, "+ Add")));
+                        React.createElement("button", { onClick: () => { setChitF({ name: "", start: today(), months: "20", prize: "", amounts: "" }); setShowChit(true); }, style: { padding: "7px 13px", borderRadius: 10, background: "rgba(0,240,220,.12)", border: "1px solid rgba(0,240,220,.3)", color: "#00f0dc", fontSize: 12, fontWeight: 700 } }, "+ Add")));
                 })(),
                 (() => {
                     const ym = today().slice(0, 7);
-                    let sPaid = 0, sAll = 0, sMonth = 0, has = false;
+                    let sPaid = 0, sMonth = 0, wholeAll = 0, invAll = 0;
                     chits.forEach(c => {
-                        if (!(Number(c.fullAmt) > 0))
-                            return;
-                        has = true;
+                        wholeAll += chitWhole(c);
+                        invAll += chitPaidAmt(c);
                         c.installments.forEach((x, i) => {
                             const sv = chitSaving(c, x);
-                            sAll += sv;
                             if (x.paid)
                                 sPaid += sv;
                             if (addMonthsStr(c.start, i).slice(0, 7) === ym)
                                 sMonth += sv;
                         });
                     });
-                    if (!has)
+                    if (chits.length === 0)
                         return null;
-                    return (React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 } }, [["Saved this month", sMonth], ["Saved so far", sPaid], ["Whole chit", sAll]].map(([l, v]) => (React.createElement("div", { key: l, style: { background: "rgba(0,200,120,.07)", border: "1px solid rgba(0,200,120,.22)", borderRadius: 13, padding: "10px 8px", textAlign: "center" } },
+                    return (React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 } }, [["Whole chit amount", wholeAll, "#ffd700"], ["Invested so far", invAll, "#00f0dc"], ["Saved so far", sPaid, "#00c878"], ["Saved this month", sMonth, "#00c878"]].map(([l, v, col]) => (React.createElement("div", { key: l, style: { background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 13, padding: "10px 8px", textAlign: "center" } },
                         React.createElement("div", { style: { fontSize: 9, color: "rgba(255,255,255,.4)", fontWeight: 600, marginBottom: 3 } }, l),
-                        React.createElement("div", { className: "mono", style: { fontSize: 13, fontWeight: 700, color: "#00c878" } }, fmtK(v)))))));
+                        React.createElement("div", { className: "mono", style: { fontSize: 13, fontWeight: 700, color: col } }, fmtK(v)))))));
                 })(),
                 chits.length === 0 && React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,.3)", padding: "4px 2px", lineHeight: 1.6 } }, "No chit added yet. Tap + Add, enter the chit name, first due date, number of months (20) and the monthly amounts."),
                 chits.map(c => {
@@ -1954,13 +1958,14 @@ function Investments({ data, setData }) {
                                     " \u00B7 ",
                                     fmtK(Number(inst[nextIdx].amt) || 0))
                                 : React.createElement("span", { style: { color: "#00c878", fontWeight: 600 } }, "\u2713 All paid")),
-                        full > 0 && React.createElement("div", { style: { fontSize: 11, color: "#00c878", marginTop: 8, lineHeight: 1.5 } },
-                            "\uD83D\uDCB0 Saved this month ",
-                            fmtK(svMonth),
-                            " \u00B7 so far ",
-                            fmtK(svPaid),
-                            " \u00B7 whole chit ",
-                            fmtK(svAll)),
+                        React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 9 } }, [["Whole chit", chitWhole(c), "#ffd700"], ["Invested so far", paidAmt, "#00f0dc"], ["Saved so far", svPaid, "#00c878"]].map(([l, v, col]) => (React.createElement("div", { key: l, style: { background: "rgba(255,255,255,.04)", borderRadius: 10, padding: "7px 4px", textAlign: "center" } },
+                            React.createElement("div", { style: { fontSize: 9, color: "rgba(255,255,255,.4)", marginBottom: 2 } }, l),
+                            React.createElement("div", { className: "mono", style: { fontSize: 12, fontWeight: 700, color: col } }, fmtK(v)))))),
+                        full > 0 && React.createElement("div", { style: { fontSize: 10, color: "rgba(255,255,255,.4)", marginTop: 6 } },
+                            "No-discount payment ",
+                            fmtK(full),
+                            "/month \u00B7 saved this month ",
+                            fmtK(svMonth)),
                         !taken && React.createElement("div", { style: { fontSize: 11, color: "rgba(255,255,255,.45)", marginTop: 8, lineHeight: 1.5 } },
                             "\uD83D\uDCC8 Investment \u00B7 prize not taken yet, so you owe nothing. Still to put in: ",
                             fmtK(total - paidAmt)),
@@ -2013,20 +2018,27 @@ function Investments({ data, setData }) {
                                     React.createElement("input", { type: "number", inputMode: "decimal", defaultValue: x.amt, key: c.id + "-" + i + "-" + x.amt, onBlur: e => setChitAmt(c.id, i, e.target.value), style: { width: 88, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "7px 8px", color: "#fff", fontSize: 12, fontFamily: "JetBrains Mono", outline: "none", textAlign: "right" } }),
                                     React.createElement("button", { onClick: () => toggleChitPaid(c.id, i), style: { width: 78, padding: "8px 0", borderRadius: 9, border: "1px solid " + (x.paid ? "rgba(0,200,120,.35)" : "rgba(0,240,220,.3)"), background: x.paid ? "rgba(0,200,120,.12)" : "rgba(0,240,220,.08)", color: x.paid ? "#00c878" : "#00f0dc", fontSize: 11, fontWeight: 700 } }, x.paid ? "✓ Paid" : "Mark paid")));
                             }),
-                            React.createElement(ActionBar, { onEdit: () => setEditChit({ ...c, fullAmt: String(c.fullAmt || ""), prizeMonth: String(c.prizeMonth || ""), prizeAmt: String(c.prizeAmt || "") }), onDelete: () => setConfirmDel({ type: "chit", id: c.id, label: c.name, amount: total }) })))));
+                            React.createElement(ActionBar, { onEdit: () => setEditChit({ ...c, chitValue: String(Number(c.chitValue) > 0 ? c.chitValue : (Number(c.fullAmt) > 0 ? Math.round(c.fullAmt * c.installments.length) : "")), prizeMonth: String(c.prizeMonth || ""), prizeAmt: String(c.prizeAmt || "") }), onDelete: () => setConfirmDel({ type: "chit", id: c.id, label: c.name, amount: total }) })))));
                 })))),
         showChit && (() => {
             const a = parseAmts(chitF.amounts);
             const m = Math.max(0, Math.min(120, parseInt(chitF.months) || 0));
             const sum = a.length === 1 ? a[0] * m : a.slice(0, m).reduce((s, v) => s + v, 0);
-            const info = a.length === 0 ? "Enter amounts below" : (a.length === 1 ? `Same ${fmtK(a[0])} for all ${m} months` : `${a.length} amounts entered${a.length !== m ? ` (need ${m})` : ""}`);
+            const info = a.length === 0 ? (Number(chitF.prize) > 0 ? `All ${m} months start at the no-discount amount` : "Enter chit prize or amounts") : (a.length === 1 ? `Same ${fmtK(a[0])} for all ${m} months` : `${a.length} amounts entered${a.length !== m ? ` (need ${m})` : ""}`);
             return (React.createElement(Modal, { title: "\uD83E\uDD1D New Chit Fund", onClose: () => setShowChit(false) },
                 React.createElement(FI, { label: "Chit name", value: chitF.name, onChange: e => setChitF(f => ({ ...f, name: e.target.value })), placeholder: "e.g. Ramesh Chit 2026" }),
                 React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
                     React.createElement(FI, { label: "First due date", type: "date", value: chitF.start, onChange: e => setChitF(f => ({ ...f, start: e.target.value })) }),
                     React.createElement(FI, { label: "No. of months", type: "number", value: chitF.months, onChange: e => setChitF(f => ({ ...f, months: e.target.value })), placeholder: "20" })),
-                React.createElement(FI, { label: "Full monthly instalment \u20B9 (without discount)", type: "number", value: chitF.full, onChange: e => setChitF(f => ({ ...f, full: e.target.value })), placeholder: "e.g. 5000 \u2014 used to calculate your saving" }),
-                React.createElement(FT, { label: "Monthly amounts (\u20B9)", value: chitF.amounts, onChange: e => setChitF(f => ({ ...f, amounts: e.target.value })), placeholder: "One amount = same every month\nOr all months in order:\n5000, 5200, 5400, 5600 ..." }),
+                React.createElement(FI, { label: "Chit prize / whole chit amount \u20B9", type: "number", value: chitF.prize, onChange: e => setChitF(f => ({ ...f, prize: e.target.value })), placeholder: "e.g. 100000" }),
+                Number(chitF.prize) > 0 && m > 0 && React.createElement("div", { style: { fontSize: 11, color: "#00c878", margin: "-4px 0 10px" } },
+                    "Monthly payment without discount: ",
+                    fmtK(Math.round(Number(chitF.prize) / m * 100) / 100),
+                    " \u00D7 ",
+                    m,
+                    " months = ",
+                    fmtK(Number(chitF.prize))),
+                React.createElement(FT, { label: "Actual monthly amounts (\u20B9) \u2014 optional", value: chitF.amounts, onChange: e => setChitF(f => ({ ...f, amounts: e.target.value })), placeholder: "Leave blank now — every month is filled with the no-discount amount. Change each month to your actual payment later.\nOr enter all months: 4500, 4600, 4700 ..." }),
                 React.createElement("div", { style: { fontSize: 11, color: "rgba(255,255,255,.45)", margin: "2px 0 10px" } },
                     info,
                     sum > 0 ? ` · Total ${fmtK(sum)}` : ""),
@@ -2035,7 +2047,7 @@ function Investments({ data, setData }) {
         editChit && (React.createElement(Modal, { title: "\u270F\uFE0F Edit Chit Fund", onClose: () => setEditChit(null) },
             React.createElement(FI, { label: "Chit name", value: editChit.name, onChange: e => setEditChit(f => ({ ...f, name: e.target.value })) }),
             React.createElement(FI, { label: "First due date", type: "date", value: editChit.start, onChange: e => setEditChit(f => ({ ...f, start: e.target.value })) }),
-            React.createElement(FI, { label: "Full monthly instalment \u20B9 (without discount)", type: "number", value: editChit.fullAmt || "", onChange: e => setEditChit(f => ({ ...f, fullAmt: e.target.value })), placeholder: "e.g. 5000" }),
+            React.createElement(FI, { label: "Chit prize / whole chit amount \u20B9", type: "number", value: editChit.chitValue || "", onChange: e => setEditChit(f => ({ ...f, chitValue: e.target.value })), placeholder: "e.g. 100000" }),
             React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
                 React.createElement(FI, { label: "Prize taken in month #", type: "number", value: editChit.prizeMonth, onChange: e => setEditChit(f => ({ ...f, prizeMonth: e.target.value })), placeholder: "blank = not taken" }),
                 React.createElement(FI, { label: "Prize amount received (\u20B9)", type: "number", value: editChit.prizeAmt, onChange: e => setEditChit(f => ({ ...f, prizeAmt: e.target.value })), placeholder: "0" })),
