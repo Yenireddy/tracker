@@ -42,7 +42,8 @@ const { useState, useRef, useEffect } = React;
 // ─── FIREBASE via REST API (no SDK imports needed — works in artifact sandbox) ─
 const FB_PROJECT = "financial-tracking-322c2";
 const FB_API_KEY = "AIzaSyCQYNOQo2WNiDnja2s8DBtmtdzz_D1RSPI";
-const FB_DOC_PATH = `projects/${FB_PROJECT}/databases/(default)/documents/users/default/appdata/state`;
+const FB_DB = "restored3"; // database holding the recovered (Oct 22) data
+const FB_DOC_PATH = `projects/${FB_PROJECT}/databases/${FB_DB}/documents/users/default/appdata/state`;
 const FB_BASE = `https://firestore.googleapis.com/v1/${FB_DOC_PATH}`;
 // Convert JS object → Firestore REST fields format
 function toFirestore(obj) {
@@ -94,35 +95,42 @@ function fromFirestore(fields) {
     Object.entries(fields || {}).forEach(([k, v]) => { obj[k] = parse(v); });
     return obj;
 }
+// Returns: the data object (found) | null (document truly does not exist yet) | false (load FAILED — never treat as empty)
 async function loadFromFirestore() {
     try {
         const res = await fetch(`${FB_BASE}?key=${FB_API_KEY}`);
-        if (!res.ok)
+        if (res.status === 404)
             return null;
+        if (!res.ok)
+            return false;
         const json = await res.json();
         if (json.fields)
             return fromFirestore(json.fields);
+        return false;
     }
     catch (e) {
         console.error("Firestore load error:", e);
+        return false;
     }
-    return null;
 }
+// Returns true only when Firestore confirmed the save
 async function saveToFirestore(data) {
     try {
         const body = JSON.stringify(toFirestore(data));
-        await fetch(`${FB_BASE}?key=${FB_API_KEY}`, {
+        const res = await fetch(`${FB_BASE}?key=${FB_API_KEY}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body,
         });
+        return res.ok;
     }
     catch (e) {
         console.error("Firestore save error:", e);
+        return false;
     }
 }
 // Each uploaded bill lives in its OWN document so the main state doc never bloats.
-const FB_BILL_URL = (id) => `https://firestore.googleapis.com/v1/projects/${FB_PROJECT}/databases/(default)/documents/users/default/bills/${id}`;
+const FB_BILL_URL = (id) => `https://firestore.googleapis.com/v1/projects/${FB_PROJECT}/databases/${FB_DB}/documents/users/default/bills/${id}`;
 async function saveBill(id, dataUrl) {
     try {
         const res = await fetch(`${FB_BILL_URL(id)}?key=${FB_API_KEY}`, {
@@ -3661,6 +3669,8 @@ function App() {
     const [data, setDataRaw] = useState(null); // null = loading
     const [screen, setScreen] = useState("dash");
     const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
+    const [loadErr, setLoadErr] = useState(false);
+    const [loadTry, setLoadTry] = useState(0);
     const [showCalc, setShowCalc] = useState(false);
     const [unlocked, setUnlocked] = useState(false);
     const saveTimer = useRef(null);
@@ -3668,10 +3678,15 @@ function App() {
     const swipe = useRef({ x: 0, y: 0 }); // must sit with other hooks, before any early return
     // ── Load from Firestore on mount ──────────────────────────────────────────
     useEffect(() => {
+        setLoadErr(false);
         loadFromFirestore().then(cloud => {
+            if (cloud === false) {
+                setLoadErr(true);
+                return;
+            } // load failed: stay on Retry screen, never start empty
             setDataRaw(dedupeIds(cloud || INIT));
         });
-    }, []);
+    }, [loadTry]);
     // ── Debounced auto-save: fires 1.5s after the last state change ───────────
     useEffect(() => {
         if (!data)
@@ -3683,9 +3698,14 @@ function App() {
         setSaveStatus("saving");
         clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(async () => {
-            await saveToFirestore(data);
-            setSaveStatus("saved");
-            setTimeout(() => setSaveStatus("idle"), 2500);
+            const ok = await saveToFirestore(data);
+            if (ok) {
+                setSaveStatus("saved");
+                setTimeout(() => setSaveStatus("idle"), 2500);
+            }
+            else {
+                setSaveStatus("error");
+            }
         }, 1500);
         return () => clearTimeout(saveTimer.current);
     }, [data]);
@@ -3697,6 +3717,16 @@ function App() {
         });
     }
     function nav(s) { setScreen(s); window.scrollTo(0, 0); }
+    // ── Load failed screen (data is safe in the cloud; nothing is overwritten) ─
+    if (!data && loadErr) {
+        return (React.createElement(React.Fragment, null,
+            React.createElement("style", null, G),
+            React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", minHeight: "100vh", background: "#080b12", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 24, textAlign: "center" } },
+                React.createElement("div", { style: { fontSize: 40 } }, "\u26A0\uFE0F"),
+                React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: "#fff" } }, "Could not load your data"),
+                React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,.5)", lineHeight: 1.6 } }, "Your data is safe in the cloud. Nothing was changed or saved. Check your internet and tap Retry."),
+                React.createElement("button", { onClick: () => setLoadTry(n => n + 1), style: { padding: "12px 28px", borderRadius: 12, background: "rgba(0,240,220,.15)", border: "1px solid rgba(0,240,220,.4)", color: "#00f0dc", fontSize: 14, fontWeight: 700 } }, "Retry"))));
+    }
     // ── Loading screen ────────────────────────────────────────────────────────
     if (!data) {
         return (React.createElement(React.Fragment, null,
