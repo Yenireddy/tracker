@@ -1205,6 +1205,7 @@ function CashFlow({ data, setData }) {
             React.createElement(FS, { label: "Category", value: editTx.cat, onChange: e => setEditTx(f => ({ ...f, cat: e.target.value })), options: editTx.type === "income" ? INCOME_CATS : expenseCats }),
             React.createElement(FI, { label: "Date", type: "date", value: editTx.date, onChange: e => setEditTx(f => ({ ...f, date: e.target.value })) }),
             React.createElement(FI, { label: "Description", value: editTx.label, onChange: e => setEditTx(f => ({ ...f, label: e.target.value })) }),
+            React.createElement(FI, { label: "Items / Note (optional)", value: editTx.note || "", onChange: e => setEditTx(f => ({ ...f, note: e.target.value })), placeholder: "e.g. Milk, Onion, Ginger\u2026" }),
             isEditUSD ? (React.createElement(React.Fragment, null,
                 React.createElement(FI, { label: "Amount in USD ($)", type: "number", value: editTx.amountUSD, onChange: e => setEditTx(f => ({ ...f, amountUSD: e.target.value })) }),
                 editTx.amountUSD && React.createElement("div", { style: { fontSize: 12, color: "#00f0dc", marginBottom: 8, marginTop: -6 } },
